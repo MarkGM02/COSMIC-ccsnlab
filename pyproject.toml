@@ -1,0 +1,26 @@
+[build-system]
+requires = ["hatchling>=1.18"]
+build-backend = "hatchling.build"
+
+[project]
+name = "ccsnlab"
+version = "0.1.0"
+description = "CCSN analysis & plotting toolbox"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "Mark Martinez" }]
+dependencies = [
+  "numpy",
+  "pandas",
+  "matplotlib",
+  "ipykernel",
+  "pyyaml",
+  "cosmic-popsynth",
+  "tables"
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ccsnlab"]
+
+[project.scripts]
+cee-rerun = "ccsnlab.cee_rerun.pipeline:main"

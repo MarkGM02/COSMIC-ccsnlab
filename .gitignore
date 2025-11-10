@@ -1,0 +1,29 @@
+# ===============================
+# Python cache and build files
+# ===============================
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+*.log
+
+# ===============================
+# Environments and editors
+# ===============================
+.venv/
+env/
+.vscode/
+.idea/
+.DS_Store
+
+# ===============================
+# Data and figures
+# ===============================
+figs/
+processed_data/
+
+# ===============================
+# Jupyter
+# ===============================
+.ipynb_checkpoints/
