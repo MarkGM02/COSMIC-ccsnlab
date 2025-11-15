@@ -1,6 +1,6 @@
 import pandas as pd
 
-sn_map = {
+sn_map = { #maps numeric SN type codes in COSMIC to string labels
     1: 'CCSN',
     2: 'ECSN',
     3: 'Ultra-stripped',
@@ -15,11 +15,11 @@ def sn_types(input, II_h_thresh = 0.033):
     """Label SNe in the dataframe as either Type I, Type II, or some exotic type based on the SN type column.
 
     Args:
-        input (pd.DataFrame): DataFrame containing SN data.
-        II_h_thresh (float): Threshold for separating Type I from Type II SNe based on H mass.
+        input (pd.DataFrame): DataFrame containing SN data. Must include at minimum the columns 'SN_1', 'SN_2', 'sn_1_m_h_ejecta', and 'sn_2_m_h_ejecta'.
+        II_h_thresh (float): Threshold for separating Type I from Type II SNe based on H ejecta mass.
 
     Returns:
-        pd.DataFrame: DataFrame with a new column 'sn_type' containing the SN type labels.
+        pd.DataFrame: DataFrame with a new columns 'sn_1_type' and 'sn_2_type' containing 'I', 'II', or exotic type labels.
     """
 
     data = input.copy()
@@ -43,31 +43,32 @@ def sn_types(input, II_h_thresh = 0.033):
 
 
 def sn_subtypes(input,
-                II_h_thresh = 0.033, # to seperate type I from II
-                IIb_IIL_h_thresh = 0.91, # to seperate type IIL from IIb
-                IIL_IIP_h_thresh = 4.5,  # to seperate type IIL from IIP
-                Ib_Ic_he_thresh = 0.14,  # to seperate type Ib from Ic
-                m_loss_thresh = -1e-4,    # to seperate type IIn
-                Ic_scheme = 'absolute', Ic_ratio=0.61,
-                IIP_scheme='exclude n', IIP_ratio=1.05 
+                II_h_thresh = 0.033,
+                IIb_IIL_h_thresh = 0.91,
+                IIL_IIP_h_thresh = 4.5,
+                Ib_Ic_he_thresh = 0.14,
+                m_loss_thresh = -1e-4,
+                Ic_scheme = 'relative', Ic_ratio=0.43,
+                IIP_scheme='branch IIP first'
                 ):
 
-    """Classify SNe from the input dataframe. Requires the columns 'sn_1_type' and 'sn_2_type' to be properly set.
+    """Classify SNe from the input dataframe. Requires the columns 'sn_1_type', 'sn_2_type', 'sn_1_m_h_ejecta', 'sn_2_m_h_ejecta',
+       'sn_1_m_he_ejecta', 'sn_2_m_he_ejecta', 'sn_1_m_ejecta', 'sn_2_m_ejecta', 'sn_1_max_loss_rate', 'sn_2_max_loss_rate', 'sn_1_donor_kstars',
+       and 'sn_2_donor_kstars' for all functionality.
 
     Args:
         input (pd.DataFrame): DataFrame containing by system ejecta and mass loss data.
-        II_h_thresh (float): Threshold for separating Type I from Type II SNe based on H mass.
-        IIb_IIL_h_thresh (float): Threshold for separating Type IIL from Type IIb SNe based on H mass.
-        IIL_IIP_h_thresh (float): Threshold for separating Type IIL from Type IIP SNe based on H mass.
-        Ic_scheme (str): Scheme for classifying Type Ic SNe, either 'absolute', 'relative', or 'evolution'.
+        II_h_thresh (float): Threshold for separating Type I from Type II SNe based on H ejecta mass.
+        IIb_IIL_h_thresh (float): Threshold for separating Type IIL from Type IIb SNe based on H ejecta mass.
+        IIL_IIP_h_thresh (float): Threshold for separating Type IIL from Type IIP SNe based on H ejecta mass.
+        Ic_scheme (str): Scheme for classifying Type Ic SNe, either 'absolute', 'relative', or 'mass transfer'.
         Ib_Ic_he_thresh (float): Threshold for separating Type Ib from Type Ic SNe based on He mass. Used only if Ic_scheme is 'absolute'.
         Ic_ratio (float): Ratio of He mass to total ejecta mass for Type Ic SNe, used if Ic_scheme is 'relative'.
-        IIP_scheme (str): Scheme for classifying Type IIP SNe, either 'exclude n', 'include n' or 'relative'.
-        IIP_ratio (float): Ratio of H mass to He mass in the ejecta for Type IIP SNe, used if IIP_scheme is 'relative'.
-        m_loss_thresh (float): Threshold for separating Type IIn and Ibn SNe based on mass loss rate.
+        IIP_scheme (str): Scheme for classifying Type IIP SNe, either 'branch IIP first' or 'branch IIn first'.
+        m_loss_thresh (float): Threshold for separating Type IIn SNe based on mass loss rate.
         
         Returns:
-        pd.DataFrame: DataFrame with classified SNe.
+        pd.DataFrame: DataFrame with new columns 'sn_1_subtype' and 'sn_2_subtype' containing the SN subtype labels.
     """
 
     data = input.copy()
@@ -96,23 +97,20 @@ def sn_subtypes(input,
             Ic_mask = type_i_mask & (m_he_ejecta < Ib_Ic_he_thresh)
         elif Ic_scheme == 'relative':
             Ic_mask = type_i_mask & (m_he_ejecta < Ic_ratio * m_ejecta)
-        elif Ic_scheme == 'evolution':
+        elif Ic_scheme == 'mass transfer':
             # in this scheme, we assume that if the star donated mass as a stripped star (kstar=7,8,9) it is a Ic
             Ic_mask = data[f'sn_{sn}_donor_kstars'].astype(str).str.split('-').apply(lambda lst: any(x in ['7', '8', '9'] for x in lst))
         else:
-            raise ValueError("Ic_scheme must be either 'absolute', 'relative', or 'evolution'")
-        
+            raise ValueError("Ic_scheme must be either 'absolute', 'relative', or 'mass transfer'")
         Ib_mask = type_i_mask & (~Ic_mask)
 
         # Type II subtypes
-        if IIP_scheme == 'exclude n':
+        if IIP_scheme == 'branch IIn first':
             IIP_mask = type_ii_mask & (m_h_ejecta >= IIL_IIP_h_thresh) & (~type_n_mask)
-        elif IIP_scheme == 'include n':
+        elif IIP_scheme == 'branch IIP first':
             IIP_mask = type_ii_mask & (m_h_ejecta >= IIL_IIP_h_thresh)
-        elif IIP_scheme == 'relative':
-            IIP_mask = type_ii_mask & (m_h_ejecta / m_he_ejecta >= IIP_ratio) & (~type_n_mask)
         else:
-            raise ValueError("IIP_scheme must be either 'exclude n', 'include n' or 'relative'")
+            raise ValueError("IIP_scheme must be either 'branch IIP first' or 'branch IIn first'")
 
         IIn_mask = type_ii_mask & type_n_mask & (~IIP_mask)
         IIb_mask = type_ii_mask & (m_h_ejecta < IIb_IIL_h_thresh) & (~IIn_mask)

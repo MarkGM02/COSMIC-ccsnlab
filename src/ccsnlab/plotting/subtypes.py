@@ -70,11 +70,11 @@ def make_type_2_plot(data, save=False, plot_type='stackplot'):
     ax1, ax2 = axs.flatten()
 
     #on the left axis we filter out IIns first
-    reclassed = sn_subtypes(data, IIP_scheme='exclude n')
+    reclassed = sn_subtypes(data, IIP_scheme='branch IIn first')
     plot_I_or_II_subtypes(reclassed, 'II', ax1, plot_type=plot_type)
 
     #on the right axis we filter out IIPs first
-    reclassed = sn_subtypes(data, IIP_scheme='include n')
+    reclassed = sn_subtypes(data, IIP_scheme='branch IIP first')
     plot_I_or_II_subtypes(reclassed, 'II', ax2, plot_type=plot_type)
 
     for ax in [ax1, ax2]:
@@ -232,7 +232,7 @@ def make_type_1_plot(data, save=False, include_braces=False, ratios=[0.3, 0.43, 
     reclassed = sn_subtypes(data, Ic_scheme='absolute', Ib_Ic_he_thresh=0.14)
     plot_I_or_II_subtypes(reclassed, 'I', abs_ax)
     
-    reclassed = sn_subtypes(data, Ic_scheme='evolution')
+    reclassed = sn_subtypes(data, Ic_scheme='mass transfer')
     plot_I_or_II_subtypes(reclassed, 'I', evol_ax)
 
     for ratio, ax in zip(ratios, [ratio_03_ax, ratio_045_ax, ratio_06_ax]):
@@ -317,7 +317,7 @@ def make_type_1_plot(data, save=False, include_braces=False, ratios=[0.3, 0.43, 
 def make_appendix_plot(data, save=False):
     fig, axs = plt.subplots(1, 2, figsize=(20, 8), sharey=True)
     ax1, ax2 = axs.flatten()
-    reclassed = sn_subtypes(data, IIP_scheme='include n', Ic_scheme='relative', Ic_ratio=0.43)
+    reclassed = sn_subtypes(data, IIP_scheme='branch IIP first', Ic_scheme='relative', Ic_ratio=0.43)
 
     plot_I_or_II_subtypes(reclassed, 'II', ax1)
     plot_I_or_II_subtypes(reclassed, 'I', ax2)

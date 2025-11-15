@@ -66,7 +66,7 @@ def plot_single_subtype_mass_type(data, mass_type, subtype, ax, bins, max_remnan
 
 def make_mass_type_plots(data, z=0.020243, Ic_ratio=0.43, bins=30, max_remnant=15.0):
     # --- classify ---
-    data = sn_subtypes(data, IIP_scheme='include n', Ic_scheme='relative', Ic_ratio=Ic_ratio)
+    data = sn_subtypes(data, IIP_scheme='branch IIP first', Ic_scheme='relative', Ic_ratio=Ic_ratio)
     data = data[(data.sigma == default_sigma) &
                 (data.alpha1 == default_alpha1) &
                 (data.met_cosmic == z)]

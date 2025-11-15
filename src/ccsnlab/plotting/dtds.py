@@ -440,7 +440,7 @@ def plot_single_subtype_across_mass_type(data, mass_type, subtype, ax, colors,
             histtype='barstacked', weights=weights.values(),
             label=labels.values(), alpha=1.0)
 
-def make_mass_type_plots(data, z=0.002326):
+def make_mass_type_dtds_I(data, z=0.002326):
     plot_data = sn_subtypes(data, Ic_scheme='relative', Ic_ratio=0.45) #reclass Is with ratio = 0.45
     plot_data = plot_data[(plot_data.sigma == 265.0) & (plot_data.alpha1 == 1.0) & (plot_data.met_cosmic == z)]
 
@@ -517,8 +517,8 @@ def make_mass_type_plots(data, z=0.002326):
     fig.savefig('final_figs/delay_times_Ib_Ic_mass_types.png', dpi=DPI, bbox_inches='tight')
     plt.show()
 
-def make_mass_type_plots_II(data, z=0.002326):
-    plot_data = sn_subtypes(data, IIP_scheme='include n') #reclass IIs with exclusive scheme
+def make_mass_type_dtds_II(data, z=0.002326):
+    plot_data = sn_subtypes(data, IIP_scheme='branch IIP first')
     plot_data = plot_data[(plot_data.sigma == 265.0) & (plot_data.alpha1 == 1.0) & (plot_data.met_cosmic == z)]
 
     fig, axs = plt.subplots(4, 3, figsize=(FIG_WIDTH, 2*FIG_HEIGHT), sharex=False, sharey='row')
@@ -629,7 +629,7 @@ def make_classification_dtd_plot(data, save=False, Z=0.020243,
         fig.add_subplot(gs[0, 3:5])   # right
     ]
     top_texts   = ['Branch IIn first', 'Branch IIP first']
-    top_schemes = ['exclude n',       'include n']
+    top_schemes = ['branch IIn first', 'branch IIP first']
 
     for ax, scheme, text, is_rightmost in zip(top_axes, top_schemes, top_texts, [False, True]):
         plot_data = data[(data.sigma == 265.0) & (data.alpha1 == 1.0) & (data.met_cosmic == Z)]
