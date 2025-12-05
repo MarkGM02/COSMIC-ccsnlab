@@ -89,9 +89,34 @@ def get_data(x, y, ylo, yhi, xlo, xhi, solar=9.05):
     data = pd.DataFrame({'z': x, 'z_err_p' : z_err_p, 'z_err_n' : z_err_n, 'ratio': y, 'ratio_err_p': ratio_err_p, 'ratio_err_n': ratio_err_n})
     return data
 
-def get_loss_data(solar=9.05):
-    return pd.read_csv(f'z_{solar}_data.csv')
+def get_loss_data(solar=9.0, raw_file="raw_loss_data.csv"):
+    df = pd.read_csv(raw_file)
 
+    oh12 = df["oh12"].to_numpy(float)
+    doh_p = df["oh12_err_p"].to_numpy(float)
+    doh_n = df["oh12_err_n"].to_numpy(float)
+
+    # central value
+    Z = z(oh12, solar)
+
+    # upper/lower abundance bounds
+    oh12_upper = oh12 + doh_p
+    oh12_lower = oh12 - doh_n
+
+    # convert bounds
+    z_upper = z(oh12_upper, solar)
+    z_lower = z(oh12_lower, solar)
+
+    # error bars
+    z_err_p = z_upper - Z
+    z_err_n = Z - z_lower
+
+    df = df.copy()
+    df["z"] = Z
+    df["z_err_p"] = z_err_p
+    df["z_err_n"] = z_err_n
+
+    return df
 
 def plot_bpass_models(ax, color='lightsteelblue', incl_bh_binaries=False):
     def get_bpass_data(x, y):
@@ -230,19 +255,16 @@ def plot_loss_data(ax, label_loss=True, solar=9.05):
 
     return lines
 
-
 def plot_I_over_II_one_curve(
         data,
         metallicities,
         ax,
-        sn1_col, sn2_col,
-        rem1_col, rem2_col,
         curve_label,
         zsun=0.02,
         bh_cap=None,
         color='C0',
         linestyle='-',
-        singles_only=False, linewidth=1,
+        singles_only=False, linewidth=2,
     ):
 
     ratios = []
@@ -250,11 +272,11 @@ def plot_I_over_II_one_curve(
         sub = data[data['met_cosmic'] == Z]
 
         # SN 1
-        sn1_types = sub[sn1_col]
+        sn1_types = sub['sn_1_type']
         singles_mask = sub['is_single'] if singles_only else np.ones(len(sub), dtype=bool)
 
         if bh_cap is not None:
-            sn1_mask = (sub[rem1_col] <= bh_cap)
+            sn1_mask = (sub['sn_1_remnant_mass'] <= bh_cap)
         else:
             sn1_mask = np.ones(len(sub), dtype=bool)
         
@@ -264,9 +286,9 @@ def plot_I_over_II_one_curve(
         sn2_types = pd.Series()
 
         if not singles_only:
-            sn2_types = sub[sn2_col]
+            sn2_types = sub['sn_2_type']
             if bh_cap is not None:
-                sn2_mask = sub[rem2_col] <= bh_cap
+                sn2_mask = sub['sn_2_remnant_mass'] <= bh_cap
             else:
                 sn2_mask = np.ones(len(sub), dtype=bool)
             
@@ -274,7 +296,6 @@ def plot_I_over_II_one_curve(
 
         n_I = len(sn1_types[sn1_types == 'I']) + len(sn2_types[sn2_types == 'I'])
         n_II = len(sn1_types[sn1_types == 'II']) + len(sn2_types[sn2_types == 'II'])
-
         ratios.append(n_I / n_II if n_II else np.nan)
 
     dimensionless_z = [z / zsun for z in metallicities]
@@ -301,20 +322,15 @@ def plotting(zsun, ax, data, legend=True, plot_singles=False,
     
     Zgrid = np.sort(data['met_cosmic'].unique())
 
-    singles_sn_cols = ('sn_1_type', 'sn_2_type')
-    singles_rem_cols = ('sn_1_remnant_mass', 'sn_2_remnant_mass')
     singles_singles_only = True
     singles_linestyle = '--'
 
-    orig_sn_cols = ('sn_1_type', 'sn_2_type')
-    orig_rem_cols = ('sn_1_remnant_mass', 'sn_2_remnant_mass')
     orig_singles_only = False
     orig_linestyle = ':' if dot_binaries else '-'
 
     lines = []
 
-    for sn_cols, rem_cols, color, curve_label, singles_only, plot, linestyle in zip([singles_sn_cols,      orig_sn_cols],
-                                                                                    [singles_rem_cols,     orig_rem_cols],
+    for color, curve_label, singles_only, plot, linestyle in zip(
                                                                                     [singles_color,        orig_color],
                                                                                     [singles_label,        orig_label],
                                                                                     [singles_singles_only, orig_singles_only],
@@ -322,7 +338,7 @@ def plotting(zsun, ax, data, legend=True, plot_singles=False,
                                                                                     [singles_linestyle,    orig_linestyle]
                                                                                     ):
         if not plot: continue
-        line = plot_I_over_II_one_curve(data, Zgrid, ax, *sn_cols, *rem_cols, curve_label,
+        line = plot_I_over_II_one_curve(data, Zgrid, ax, curve_label,
                                         color=color, linestyle=linestyle, zsun=zsun, linewidth=linewidth,
                                         singles_only=singles_only, bh_cap=bh_cap)
         lines.append(line)
@@ -431,7 +447,8 @@ def plot_Klencki(ax, pess, klencki_10, klencki_07, all_mergers, zsun=0.02, bh_ca
               fontsize=LEGEND_FONT_SIZE, title_fontsize=LEGEND_FONT_SIZE)
 
 def make_paper_5_figure(fiducial_data, sigma_data, alpha_data, pess, klencki_10,
-                        klencki_07, all_mergers, zsun=0.02, bh_cap=3.0, solar=9.05):
+                        klencki_07, all_mergers, zsun=0.02, bh_cap=3.0, solar=9.05,
+                        savepath='final_figs/figure_1.png'):
     
     fig, axs = plt.subplots(2, 2, figsize=(24, 16))
     mass_cap_ax, sigma_change_ax, alpha_change_ax5, klencki_merger_ax = axs.flatten()
@@ -477,8 +494,5 @@ def make_paper_5_figure(fiducial_data, sigma_data, alpha_data, pess, klencki_10,
 
 
     fig.tight_layout()
-    fig.savefig('final_figs/figure_1.png', dpi=300)
+    fig.savefig(savepath, dpi=300, bbox_inches='tight')
     plt.show()
-
-if __name__ == "__main__":
-    make_paper_5_figure(zsun=0.01)

@@ -1,10 +1,9 @@
-import matplotlib
 import matplotlib.pyplot as plt
 import matplotlib.lines as mlines
 import matplotlib.patches as mpatches
 from matplotlib.legend_handler import HandlerBase
 
-from sn_types import sn_subtypes
+from ccsnlab.sn_types import sn_subtypes
 import pandas as pd
 
 LEGEND_FONT_SIZE = 24
@@ -65,7 +64,7 @@ def plot_I_or_II_subtypes(data, sn_type, ax, zsun=0.02, remnant_cap=3.0, plot_ty
         for subtype, values in final_results_dict.items():
             ax.plot(metallicities, values, label=subtype, color=sn_color_dict[subtype], linewidth=3)
 
-def make_type_2_plot(data, save=False, plot_type='stackplot'):
+def make_type_2_plot(data, save=False, plot_type='stackplot', savepath="final_figs/type_II_classification_variations.png"):
     fig, axs = plt.subplots(1, 2, figsize=(22, 8), sharey=True)
     ax1, ax2 = axs.flatten()
 
@@ -106,7 +105,7 @@ def make_type_2_plot(data, save=False, plot_type='stackplot'):
                 va='bottom', fontsize=LEGEND_FONT_SIZE, bbox=text_style_dict)
 
     fig.tight_layout()
-    if save: fig.savefig("final_figs/type_II_classification_variations.png", dpi=DPI, bbox_inches='tight')
+    if save: fig.savefig(savepath, dpi=DPI, bbox_inches='tight')
     plt.show()
 
 
@@ -116,7 +115,8 @@ def add_shivvers_point(ax):
     Ib_proportion_of_type_I_error = (0.625 ** 2) * 0.3 # error propagation
 
     #read in loss data with solar abundance 9.05
-    loss_data = pd.read_csv('z_9.05_data.csv')
+    from ccsnlab.plotting.ratios import get_loss_data
+    loss_data = get_loss_data(solar=9.0)
     #the lowest value is the first point minus its left error bar
     z_min = loss_data.iloc[0]['z'] - loss_data.iloc[0]['z_err_n']
 
@@ -159,7 +159,8 @@ class HandlerLineWithPatch(HandlerBase):
         return [rect, legline]
 
 
-def make_type_1_plot(data, save=False, include_braces=False, ratios=[0.3, 0.43, 0.6]):
+def make_type_1_plot(data, save=False, include_braces=False, ratios=[0.3, 0.43, 0.6],
+                     savepath="final_figs/type_I_classification_variations.png"):
     TICK_FONT_SIZE = 40
     LABEL_FONT_SIZE = 70
     BRACES_FONT_SIZE = 58
@@ -275,8 +276,9 @@ def make_type_1_plot(data, save=False, include_braces=False, ratios=[0.3, 0.43, 
             ax.add_artist(legend_1)
         
         x = 0.05 if ax != evol_ax else 0.03
+        size = 0  if ax != evol_ax else -1
         ax.text(x, 0.05, label_dict[ax], transform=ax.transAxes,
-                ha='left', va='bottom', fontsize=LEGEND_FONT_SIZE+15, bbox=text_style_dict)
+                ha='left', va='bottom', fontsize=LEGEND_FONT_SIZE+15+size, bbox=text_style_dict)
         
         add_shivvers_point(ax)
         if ax == abs_ax:
@@ -310,11 +312,11 @@ def make_type_1_plot(data, save=False, include_braces=False, ratios=[0.3, 0.43, 
         )
 
     if save:
-        fig.savefig("final_figs/type_I_classification_variations.png", dpi=DPI, bbox_inches='tight')
+        fig.savefig(savepath, dpi=DPI, bbox_inches='tight')
     plt.show()
 
 
-def make_appendix_plot(data, save=False):
+def make_appendix_plot(data, save=False, savepath="final_figs/appendix_MT_stability.png"):
     fig, axs = plt.subplots(1, 2, figsize=(20, 8), sharey=True)
     ax1, ax2 = axs.flatten()
     reclassed = sn_subtypes(data, IIP_scheme='branch IIP first', Ic_scheme='relative', Ic_ratio=0.43)
@@ -363,5 +365,5 @@ def make_appendix_plot(data, save=False):
         
     fig.tight_layout()
     if save:
-        fig.savefig("final_figs/appendix_MT_stability.png", dpi=DPI, bbox_inches='tight')
+        fig.savefig(savepath, dpi=DPI, bbox_inches='tight')
     plt.show()

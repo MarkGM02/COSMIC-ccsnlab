@@ -1,7 +1,14 @@
 import pandas as pd
 import numpy as np
-from cosmic.sample.initialbinarytable import InitialBinaryTable
-from cosmic.evolve import Evolve
+try:
+    from cosmic.sample.initialbinarytable import InitialBinaryTable
+    from cosmic.evolve import Evolve
+except ImportError:
+    raise ImportError(
+        "The rerun functionality requires COSMIC 3.5.0 to reproduce exact results. Install with:\n"
+        "    pip install 'ccsnlab[cosmic]'"
+    )
+
 
 def get_init_conds_and_bse_dict(processed_df, met_cosmic, sigma, alpha, qcflag):
     """Extract an init_cond dataframe and a bse_dict from a processed dataframe
@@ -72,6 +79,8 @@ def evolve_and_save(initCond, BSE_dict, time_window=0.001):
         initialbinarytable=initCond,
         BSEDict=BSE_dict,
         timestep_conditions=[
+            ['RRLO_1 >= 1', 'dtp=0.00001'],
+            ['RRLO_2 >= 1', 'dtp=0.00001'],
             ['kstar_1 >= 4', 'dtp=0.0'],
             ['kstar_2 >= 4', 'dtp=0.0']
         ]

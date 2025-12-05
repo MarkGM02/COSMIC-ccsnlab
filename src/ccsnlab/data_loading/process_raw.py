@@ -5,8 +5,8 @@ import numpy as np
 import pandas as pd
 warnings.filterwarnings('ignore', category=pd.errors.PerformanceWarning)
 
-from delayed_fryer import get_CO_cores
-from sn_types import sn_types, sn_subtypes
+from ccsnlab.data_loading.delayed_fryer import get_CO_cores
+from ccsnlab.sn_types import sn_types, sn_subtypes
 
 def create_sn_info(bpp, bcm, metallicity, sigma, alpha1, sample_mass, singles_mass):
     

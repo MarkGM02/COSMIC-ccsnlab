@@ -1,8 +1,7 @@
-from sn_types import sn_subtypes
+from ccsnlab.sn_types import sn_subtypes
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-from matplotlib.patches import Patch
 
 default_sigma = 265.0
 default_alpha1 = 1.0

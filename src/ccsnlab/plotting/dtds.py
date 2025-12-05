@@ -3,7 +3,7 @@ import numpy as np
 import pandas as pd
 from matplotlib.colors import LinearSegmentedColormap
 from matplotlib.patches import Patch
-from sn_types import sn_subtypes
+from ccsnlab.sn_types import sn_subtypes
 import matplotlib.gridspec as gridspec
 
 LEGEND_FONT_SIZE = 22

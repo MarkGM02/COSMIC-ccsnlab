@@ -6,9 +6,15 @@ warnings.filterwarnings("ignore", category=pd.errors.PerformanceWarning)
 warnings.filterwarnings("ignore", category=pd.errors.SettingWithCopyWarning)
 warnings.filterwarnings("ignore", category=UserWarning)
 
-from merger_criteria_functions import get_criterion_func
-from Klencki_lambda import get_lambda
-from cosmic.evolve import Evolve
+from ccsnlab.cee_rerun.merger_criteria_functions import get_criterion_func
+from ccsnlab.cee_rerun.Klencki_lambda import get_lambda
+try:
+    from cosmic.evolve import Evolve
+except ImportError:
+    raise ImportError(
+        "The rerun functionality requires COSMIC 3.5.0 to reproduce exact results. Install with:\n"
+        "    pip install 'ccsnlab[cosmic]'"
+    )
 
 def rerun_Klencki(original_bpp, original_bcm, metallicity, merger_criteria, qcflag):
     """
