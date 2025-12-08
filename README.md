@@ -2,7 +2,7 @@
 
 # ccsnlab
 
-This repository contains the supporting code developed for [**“Properties of Core Collapse Supernovae from Binary Population Synthesis.”**](https://doi.org/10.48550/arXiv.2511.23285) It includes scripts and utilities which may be used to reproduce and extend the results from the paper. Specifically, the repository provides:
+This repository contains the supporting code developed for [**“Properties of Core Collapse Supernovae from Binary Population Synthesis.”**](https://ui.adsabs.harvard.edu/abs/2025arXiv251123285M/abstract) It includes scripts and utilities which may be used to reproduce and extend the results from the paper. Specifically, the repository provides:
 
 1. **Plotting scripts** to recreate all figures presented in the paper, including example notebooks.
 2. **Supernova classification utilities**, enabling users to modify or extend the core collapse supernova (CCSN) subtype schemes (see below), and classify the supernovae from your own COSMIC runs.
@@ -14,7 +14,7 @@ This repository contains the supporting code developed for [**“Properties of C
 
 If you desire to view the original results from the paper, or exactly replicate our plots, please download the processed **CCSN population dataframes** from the [**Zenodo archive**](https://doi.org/10.5281/zenodo.17620853).
 
-These dataframes contain all binary systems that underwent one or more CCSNe in our COSMIC population grids. Each row corresponds to a unique binary (`bin_num`) and includes information about both the first and second supernova events, and the system at zero age main sequence (ZAMS). You can also create these dataframes from your own COSMIC output using the tools in the [`ccsnlab.data_loading`](src/ccsnlab/data_loading) module. A more thorough description of this is in the next section.
+These dataframes contain all binary systems that underwent one or more CCSNe in our COSMIC population grids. Each row corresponds to a unique binary (`bin_num`) and includes information about both the first and second supernova events, and the system at zero age main sequence (ZAMS). You can also create these dataframes from your own COSMIC output using the tools in the [`ccsnlab.data_loading`](src/ccsnlab/data_loading) module. The dataframes may be accessed by opening the `.h5` files and loading the dataset stored under the key `"data"`. A more thorough description of this is in the next section.
 
 All columns listed with an asterisk (`_*`) appear twice, once with a 1 for the **primary** and once with a 2 for the **secondary**. The 1 and 2 do **not** correspond to the order in which the events occured, consult the (`sn_*_time`) column to determine their order. The columns are as follows:
 
