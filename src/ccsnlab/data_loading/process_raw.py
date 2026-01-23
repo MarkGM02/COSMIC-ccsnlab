@@ -5,41 +5,132 @@ import numpy as np
 import pandas as pd
 warnings.filterwarnings('ignore', category=pd.errors.PerformanceWarning)
 
-from ccsnlab.data_loading.delayed_fryer import get_CO_cores
 from ccsnlab.sn_types import sn_types, sn_subtypes
 
-def create_sn_info(bpp, bcm, metallicity, sigma, alpha1, sample_mass, singles_mass):
+"""
+Main module to create supernova information from COSMIC output for a single population.
+"""
+
+def create_sn_info(bpp, bcm, metallicity, sigma, alpha1, remnant_prescription, binfrac, sample_mass, singles_mass, n_stars):
+    """
+    Create a dataframe with one row per binary system containing supernova and evolutionary information. All parameters besides
+    the bpp and bcm are strictly around for logging. The core functionality works with dummy parameters everywhere else, however
+    to plot variations and analyze the impact of different parameters, the full set makes everything a lot easier, and is assumed in
+    the plotting functions.
+
+    Parameters
+    ----------
+    bpp : pd.DataFrame
+        bpp from COSMIC output
+    bcm : pd.DataFrame
+        bcm from COSMIC output. Must include dense output in the final kyr before supernova,
+        and the row at the final timestep to faithfully classify all supernovae.
+    metallicity : float
+        Metallicity of the population
+    kicks : str
+        User created string corresponding to kick model used in run e.g. 'Sigma_50' or 'Disberg'
+    alpha1 : float
+        Common envelope efficiency parameter
+    remnant_prescription : str
+        Prescription for calculating remnant masses
+    binfrac : float
+        Binary fraction of the population
+    sample_mass : float
+        Total sampled mass
+    singles_mass : float
+        Mass in single stars
+    n_stars : int
+        Number of stars in the population
+
+    Returns
+    -------
+    pd.DataFrame
+        Dataframe with supernova and evolutionary information for each binary system. Columns include:
+
+        **System Properties:**
+        - bin_num : int
+            Unique (within population) ID
+        - SN_1, SN_2 : int
+            Supernova type codes for primary and secondary (0=none, 1=FeCCSN 2=ECSN, see COSMIC docs)
+        - merger_type : int
+            String of merged kstars if merger occured, see COSMIC docs
+        - is_single : bool
+            Whether the system was formed as a single star
+
+        **ZAMS (Zero Age Main Sequence) Properties:**
+        - zams_mass_1, zams_mass_2 : float
+            Initial masses of primary and secondary
+        - zams_porb, zams_ecc, zams_sep : float
+            Initial orbital period, eccentricity, and separation
+
+        **Supernova 1 (Primary) Properties:**
+        - sn_1_time : float
+            Time of primary supernova (Myr)
+        - sn_1_mass_1, sn_1_mass_2 : float
+            Masses of primary and secondary at SN1
+        - sn_1_massc_he_layer_1, sn_1_massc_co_layer_1 : float
+            He and CO core masses at SN1
+        - sn_1_menv_1 : float
+            Envelope mass (convective only, due to COSMIC logging) of primary at SN1
+        - sn_1_kstar_1, sn_1_kstar_2 : int
+            kstar types of primary and secondary at SN1, see COSMIC docs
+        - sn_1_porb, sn_1_ecc, sn_1_sep : float
+            Orbital period, eccentricity, and separation at SN1
+        - sn_1_remnant_mass : float
+            Mass of remnant from primary SN
+        - sn_1_m_ejecta : float
+            Ejected mass from primary SN
+        - sn_1_max_loss_rate : float
+            Maximum mass loss rate in 1 kyr before SN1
+        - sn_1_donor_kstars, sn_1_accretor_kstars : str
+            string of kstar types when primary was donor/accretor. Not necesarily pre SN1 (trivially before SN1 if kstar < 13). Example: "1-2-5"
+        - sn_1_interactions : str
+            Description of mass transfer interactions before SN1. Either None, 'CEE' (if any CEE), or 'RLOF' (rlof occurs, NO CEE)
+        - sn_1_last_donor : str
+            Which star was last to donate mass before SN1 (primary or secondary)
+        - sn_1_merger : bool
+            Whether primary underwent merger before SN1
+        - sn_1_bh, sn_1_ns : bool
+            Whether primary remnant is black hole or neutron star
+
+        **Supernova 2 (Secondary) Properties:**
+        - Similar structure to SN 1 columns, but for the secondary star
+
+        **Ejecta Composition:**
+        - sn_1_m_H_tot, sn_1_m_He_tot, sn_1_m_CO_tot : float
+            Total hydrogen, helium, and CO masses in ejecta from SN1
+        - Similar columns for SN2
+
+    """
     
     bin_nums = bcm['bin_num'].unique()
-    bpp = bpp[bpp['bin_num'].isin(bin_nums)] #filter couple weirdos not in bcm
+    bpp = bpp[bpp['bin_num'].isin(bin_nums)] #filter potential outliers not in bcm
 
-    #bcm maniupulation first - get the merger SN_1 and SN_2, as well as the merger type
-    bcm_final_rows = bcm[bcm['tphys'] == 13700.0]
-    bcm_final_rows = bcm_final_rows[~bcm_final_rows.duplicated(subset='bin_num')] #drop duplicates created by mistake
-    bcm_final_rows = bcm_final_rows[['bin_num', 'SN_1', 'SN_2', 'merger_type']]
+    #bcm manipulation first - get the merger SN_1 and SN_2, as well as the merger type
+    max_time = bcm.tphys.max()
+    bcm_final_rows = bcm[bcm['tphys'] == max_time][['bin_num', 'SN_1', 'SN_2', 'merger_type']]
 
-    #now bpp manipulation - get the info at supernovae and zams
+    #now bpp manipulation - get information at each supernova
     primary_sne =   bpp[bpp['evol_type'] == 15]
     secondary_sne = bpp[bpp['evol_type'] == 16]
     
-    primary_sne =     primary_sne[['bin_num', 'tphys', 'mass_1', 'mass_2', 'massc_1', 'menv_1', 'kstar_1', 'kstar_2', 'porb', 'ecc', 'sep']]
-    secondary_sne = secondary_sne[['bin_num', 'tphys', 'mass_1', 'mass_2', 'massc_2', 'menv_2', 'kstar_1', 'kstar_2', 'porb', 'ecc', 'sep']]
+    primary_sne =     primary_sne[['bin_num', 'tphys', 'mass_1', 'mass_2', 'massc_he_layer_1', 'massc_co_layer_1', 'menv_1', 'kstar_1', 'kstar_2', 'porb', 'ecc', 'sep']]
+    secondary_sne = secondary_sne[['bin_num', 'tphys', 'mass_1', 'mass_2', 'massc_he_layer_2', 'massc_co_layer_2', 'menv_2', 'kstar_1', 'kstar_2', 'porb', 'ecc', 'sep']]
 
     #rename columns to start with 'sn_1' or 'sn_2'
-    primary_sne.columns = ['bin_num', 'sn_1_time', 'sn_1_mass_1', 'sn_1_mass_2', 'sn_1_massc_1', 'sn_1_menv_1', 'sn_1_kstar_1', 'sn_1_kstar_2', 'sn_1_porb', 'sn_1_ecc', 'sn_1_sep']
-    secondary_sne.columns = ['bin_num', 'sn_2_time', 'sn_2_mass_1', 'sn_2_mass_2', 'sn_2_massc_2', 'sn_2_menv_2', 'sn_2_kstar_1', 'sn_2_kstar_2', 'sn_2_porb', 'sn_2_ecc', 'sn_2_sep']
+    primary_sne.columns = ['bin_num', 'sn_1_time', 'sn_1_mass_1', 'sn_1_mass_2', 'sn_1_massc_he_layer_1', 'sn_1_massc_co_layer_1', 'sn_1_menv_1', 'sn_1_kstar_1', 'sn_1_kstar_2', 'sn_1_porb', 'sn_1_ecc', 'sn_1_sep']
+    secondary_sne.columns = ['bin_num', 'sn_2_time', 'sn_2_mass_1', 'sn_2_mass_2', 'sn_2_massc_he_layer_2', 'sn_2_massc_co_layer_2', 'sn_2_menv_2', 'sn_2_kstar_1', 'sn_2_kstar_2', 'sn_2_porb', 'sn_2_ecc', 'sn_2_sep']
 
     zams = bpp[bpp['tphys'] == 0]
     zams = zams[['bin_num', 'mass_1', 'mass_2', 'porb', 'ecc', 'sep']]
     zams.columns = ['bin_num', 'zams_mass_1', 'zams_mass_2', 'zams_porb', 'zams_ecc', 'zams_sep']
 
-    #want to get the maximum mass loss in the previous 1000 yrs before the SN
+    #want to get the maximum mass loss in the previous kyr before the SN
     times = primary_sne[['bin_num', 'sn_1_time']].merge(secondary_sne[['bin_num', 'sn_2_time']], on='bin_num', how='outer')
     bcm_with_times = bcm.merge(times, on='bin_num', how='left')
-
-    window = 1e-3 # 1000 years in Myr
-    mask1 = (bcm_with_times['tphys'] >= bcm_with_times['sn_1_time'] - window) & (bcm_with_times['tphys'] <=  bcm_with_times['sn_1_time'])
-    mask2 = (bcm_with_times['tphys'] >= bcm_with_times['sn_2_time'] - window) & (bcm_with_times['tphys'] <=  bcm_with_times['sn_2_time'])
+    kyr = 1e-3 # 1000 years in Myr
+    mask1 = (bcm_with_times['tphys'] >= bcm_with_times['sn_1_time'] - kyr) & (bcm_with_times['tphys'] <=  bcm_with_times['sn_1_time'])
+    mask2 = (bcm_with_times['tphys'] >= bcm_with_times['sn_2_time'] - kyr) & (bcm_with_times['tphys'] <=  bcm_with_times['sn_2_time'])
 
     sn1_max_loss_rate = bcm_with_times.loc[mask1].groupby('bin_num')['deltam_1'].min().rename('sn_1_max_loss_rate')
     sn2_max_loss_rate = bcm_with_times.loc[mask2].groupby('bin_num')['deltam_2'].min().rename('sn_2_max_loss_rate')
@@ -61,6 +152,13 @@ def create_sn_info(bpp, bcm, metallicity, sigma, alpha1, sample_mass, singles_ma
     donor_kstars_1 = donor_kstars_1.groupby('bin_num')['kstar_1'].apply(lambda x: '-'.join(map(str, sorted(x.unique())))).rename('sn_1_donor_kstars')
     donor_kstars_2 = donor_kstars_2.groupby('bin_num')['kstar_2'].apply(lambda x: '-'.join(map(str, sorted(x.unique())))).rename('sn_2_donor_kstars')
 
+    #get a list of accretor kstars (i.e. star 1 accretes when RRLO_2 > 1)
+    accretor_kstars_1 = bpp[bpp['RRLO_2'] > 1][['bin_num', 'kstar_1']]
+    accretor_kstars_2 = bpp[bpp['RRLO_1'] > 1][['bin_num', 'kstar_2']]
+    #collapse these into a string i.e., "1-3-5" if the primary was an accretor at kstar 1, 3, and 5
+    accretor_kstars_1 = accretor_kstars_1.groupby('bin_num')['kstar_1'].apply(lambda x: '-'.join(map(str, sorted(x.unique())))).rename('sn_1_accretor_kstars')
+    accretor_kstars_2 = accretor_kstars_2.groupby('bin_num')['kstar_2'].apply(lambda x: '-'.join(map(str, sorted(x.unique())))).rename('sn_2_accretor_kstars')
+
     def create_interaction_df(bpp):
         #the bpp has the standard columns, plus sn_1_time and sn_2_time
         
@@ -75,13 +173,13 @@ def create_sn_info(bpp, bcm, metallicity, sigma, alpha1, sample_mass, singles_ma
                             'sn_2_merger' : [False for _ in range(len(bin_nums))]})
 
         for rrlo, flag, last_donor, kstar, (progenitor, companion), merger, companion_m in zip(['RRLO_1', 'RRLO_2'],
-                                                                        ['sn_1_interactions', 'sn_2_interactions'],
-                                                                        ['sn_1_last_donor', 'sn_2_last_donor'],
-                                                                        ['kstar_1', 'kstar_2'],
-                                                                        [('primary', 'secondary'),
-                                                                        ('secondary', 'primary')],
-                                                                        ['sn_1_merger', 'sn_2_merger'],
-                                                                        ['mass_2', 'mass_1']):
+                                                                                               ['sn_1_interactions', 'sn_2_interactions'],
+                                                                                               ['sn_1_last_donor', 'sn_2_last_donor'],
+                                                                                               ['kstar_1', 'kstar_2'],
+                                                                                               [('primary', 'secondary'),
+                                                                                                ('secondary', 'primary')],
+                                                                                               ['sn_1_merger', 'sn_2_merger'],
+                                                                                               ['mass_2', 'mass_1']):
             before_sn = bpp[bpp[kstar] < 13]
             
             #mark mergers
@@ -123,19 +221,22 @@ def create_sn_info(bpp, bcm, metallicity, sigma, alpha1, sample_mass, singles_ma
     result = pd.merge(result, rem2_rows, on='bin_num', how='left')
     result = pd.merge(result, donor_kstars_1, on='bin_num', how='left')
     result = pd.merge(result, donor_kstars_2, on='bin_num', how='left')
+    result = pd.merge(result, accretor_kstars_1, on='bin_num', how='left')
+    result = pd.merge(result, accretor_kstars_2, on='bin_num', how='left')
     result = pd.merge(result, interaction_df, on='bin_num', how='left')
 
-    #fix the SN_1 and SN_2 where there is no actual SN, these come from mergers which get called a SN in COSMIC
+    #fix the SN_1 and SN_2 where there is no actual SN, these come from mergers which get called a SN in COSMIC in some cases
     no_sn1_mask = np.isnan(result['sn_1_time'])
     no_sn2_mask = np.isnan(result['sn_2_time'])
     result.loc[no_sn1_mask, 'SN_1'] = 0
     result.loc[no_sn2_mask, 'SN_2'] = 0
 
-    #more COSMIC housekeeping. Accretion induced collapse of ONe wds can create an ultra low mass NS. We want to flag these as ECSN, since COSMIC sometimes calls then non electron capture.
-    #Additionally, some ECSN are not labelled as such in the bcm, but we can tell they are ECSN from the remnant mass they produce
+    #more COSMIC housekeeping. Accretion induced collapse of ONe wds can create an ultra low mass NS. We want to flag these as ECSN, since COSMIC sometimes
+    #gives them the wrong flag. Additionally, some ECSN are not labelled as such in the bcm, but we can tell they are ECSN from the remnant mass they produce
+    #TODO: make these checks work nicely with all remnant prescriptions.
     ns_mass_from_ecsn_in_the_delayed_fryer_prescription = 6.6666667*(np.sqrt(1.0 + 0.3* 1.38) - 1.0)
     minimum_ns_mass = 1.242
-    sn_1_ecsn_mask = (result['sn_1_remnant_mass'] == minimum_ns_mass) | (result['sn_1_remnant_mass'] == ns_mass_from_ecsn_in_the_delayed_fryer_prescription)
+    sn_1_ecsn_mask = (result['sn_1_remnant_mass'] = minimum_ns_mass) | (result['sn_1_remnant_mass'] == ns_mass_from_ecsn_in_the_delayed_fryer_prescription)
     sn_2_ecsn_mask = (result['sn_2_remnant_mass'] == minimum_ns_mass) | (result['sn_2_remnant_mass'] == ns_mass_from_ecsn_in_the_delayed_fryer_prescription)
     result['SN_1'] = np.where(sn_1_ecsn_mask, 2, result['SN_1'])
     result['SN_2'] = np.where(sn_2_ecsn_mask, 2, result['SN_2']) 
@@ -150,32 +251,26 @@ def create_sn_info(bpp, bcm, metallicity, sigma, alpha1, sample_mass, singles_ma
     result['sn_1_ns'] = result['bin_num'].isin(ns1_bin_nums)
     result['sn_2_ns'] = result['bin_num'].isin(ns2_bin_nums)
 
-    #using the fryer mass precription -- walk back to the CO core mass
-    result = get_CO_cores(result)
-
-    #start by adding in total ejecta mass
+    #Now begins the section where we calculate the ejecta profile. This is easier now that COSMIC tracks co and he core mass!
     for sn in (1,2):
         # ejecta mass = total mass - remnant mass, limited to 0
         result[f'sn_{sn}_m_ejecta'] = (result[f'sn_{sn}_mass_{sn}'] - result[f'sn_{sn}_remnant_mass']).clip(lower=0)
 
     #now we determine H ejecta by assuming that this is the minimum of the combined envelope mass and the total ejecta mass
     for sn in (1, 2):
-        mcore_tot  = result[f'sn_{sn}_massc_{sn}']          # CO core + He Core
-        mcore_CO = result[f'sn_{sn}_CO_core_mass']          # CO core mass only
-        mcore_He = (mcore_tot - mcore_CO).clip(lower=0)     # He core mass only
-
-        mass = result[f'sn_{sn}_mass_{sn}']                                       # pre-SN total mass
-        menv_convective = result[f'sn_{sn}_menv_{sn}']                            # what cosmic calls the envelope mass
-        menv_radiative = (mass - mcore_tot - menv_convective).clip(lower=0)       # convective envelope mass -- we clip for the systems in CEE where menv + massc > mass
-        menv_tot = menv_radiative + menv_convective                               # total envelope mass
+        mcore_CO = result[f'sn_{sn}_massc_co_layer_{sn}']                                   # CO core mass only
+        mcore_He = result[f'sn_{sn}_massc_he_layer_{sn}']                                   # He core mass only
+        mass = result[f'sn_{sn}_mass_{sn}']                                                 # pre-SN total mass
+        menv_convective = result[f'sn_{sn}_menv_{sn}']                                      # what cosmic calls the "menv"
+        menv_radiative = (mass - mcore_CO - mcore_He - menv_convective).clip(lower=0)       # convective envelope mass
 
         stripped = result[f'sn_{sn}_kstar_{sn}'] >= 7  # boolean mask for stripped stars
 
-        #for stripped stars, the hydrogen mass is 0. For non-stripped stars, the hydrogen mass is the total envelope mass
-        m_Hydrogen_tot = np.where(stripped, 0.0, menv_tot)
+        #for stripped stars, the hydrogen mass is 0. For non-stripped stars, the hydrogen mass is total envelope mass.
+        m_Hydrogen_tot = np.where(stripped, 0.0, menv_convective + menv_radiative)
 
         #for stripped stars, the helium mass is the total envelope mass + the he core. For non-stripped stars, the helium mass is the he core only
-        m_Helium_tot = np.where(stripped, menv_tot + mcore_He, mcore_He)
+        m_Helium_tot = np.where(stripped, menv_convective + menv_radiative + mcore_He, mcore_He)
 
         #for all stars, the CO mass is the CO core mass
         m_CO_tot = mcore_CO
@@ -196,13 +291,16 @@ def create_sn_info(bpp, bcm, metallicity, sigma, alpha1, sample_mass, singles_ma
     result = sn_types(result)
     result = sn_subtypes(result)
 
-    #add the total sample mass and singles mass to each
+    #add the total sample mass, singles mass, and n_stars to each
     result['sample_mass'] = sample_mass
     result['singles_mass'] = singles_mass
+    result['n_stars'] = n_stars
 
-    #add the sigma, alpha1, metallicity for identification
+    #add all the relevant varied evolution/sampling parameters for record keeping:
     result['sigma'] = sigma
     result['alpha1'] = alpha1
     result['met_cosmic'] = metallicity
+    result['remnant_prescription'] = remnant_prescription
+    result['binfrac'] = binfrac
 
     return result
