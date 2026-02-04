@@ -11,7 +11,7 @@ from ccsnlab.sn_types import sn_types, sn_subtypes
 Main module to create supernova information from COSMIC output for a single population.
 """
 
-def create_sn_info(bpp, bcm, metallicity, sigma, alpha1, remnant_prescription, binfrac, sample_mass, singles_mass, n_stars):
+def create_sn_info(bpp, bcm, metallicity, kicks, alpha, qcflag, remnant_prescription, binfrac, sample_mass, singles_mass, n_stars, n_singles):
     """
     Create a dataframe with one row per binary system containing supernova and evolutionary information. All parameters besides
     the bpp and bcm are strictly around for logging. The core functionality works with dummy parameters everywhere else, however
@@ -29,8 +29,10 @@ def create_sn_info(bpp, bcm, metallicity, sigma, alpha1, remnant_prescription, b
         Metallicity of the population
     kicks : str
         User created string corresponding to kick model used in run e.g. 'Sigma_50' or 'Disberg'
-    alpha1 : float
+    alpha : float
         Common envelope efficiency parameter
+    qcflag : int
+        Critical mass ratio flag in COSMIC
     remnant_prescription : str
         Prescription for calculating remnant masses
     binfrac : float
@@ -41,6 +43,8 @@ def create_sn_info(bpp, bcm, metallicity, sigma, alpha1, remnant_prescription, b
         Mass in single stars
     n_stars : int
         Number of stars in the population
+    n_singles : int
+        Number of single stars in the population
 
     Returns
     -------
@@ -231,13 +235,10 @@ def create_sn_info(bpp, bcm, metallicity, sigma, alpha1, remnant_prescription, b
     result.loc[no_sn1_mask, 'SN_1'] = 0
     result.loc[no_sn2_mask, 'SN_2'] = 0
 
-    #more COSMIC housekeeping. Accretion induced collapse of ONe wds can create an ultra low mass NS. We want to flag these as ECSN, since COSMIC sometimes
-    #gives them the wrong flag. Additionally, some ECSN are not labelled as such in the bcm, but we can tell they are ECSN from the remnant mass they produce
-    #TODO: make these checks work nicely with all remnant prescriptions.
+    # COSMIC housekeeping. Identify ECSNe incorrectly labelled, these produce small remnants via the branch in the remnant prescription.
     ns_mass_from_ecsn_in_the_delayed_fryer_prescription = 6.6666667*(np.sqrt(1.0 + 0.3* 1.38) - 1.0)
-    minimum_ns_mass = 1.242
-    sn_1_ecsn_mask = (result['sn_1_remnant_mass'] = minimum_ns_mass) | (result['sn_1_remnant_mass'] == ns_mass_from_ecsn_in_the_delayed_fryer_prescription)
-    sn_2_ecsn_mask = (result['sn_2_remnant_mass'] == minimum_ns_mass) | (result['sn_2_remnant_mass'] == ns_mass_from_ecsn_in_the_delayed_fryer_prescription)
+    sn_1_ecsn_mask = result['sn_1_remnant_mass'] <= ns_mass_from_ecsn_in_the_delayed_fryer_prescription
+    sn_2_ecsn_mask = result['sn_2_remnant_mass'] <= ns_mass_from_ecsn_in_the_delayed_fryer_prescription
     result['SN_1'] = np.where(sn_1_ecsn_mask, 2, result['SN_1'])
     result['SN_2'] = np.where(sn_2_ecsn_mask, 2, result['SN_2']) 
 
@@ -295,10 +296,12 @@ def create_sn_info(bpp, bcm, metallicity, sigma, alpha1, remnant_prescription, b
     result['sample_mass'] = sample_mass
     result['singles_mass'] = singles_mass
     result['n_stars'] = n_stars
+    result['n_singles'] = n_singles
 
     #add all the relevant varied evolution/sampling parameters for record keeping:
-    result['sigma'] = sigma
-    result['alpha1'] = alpha1
+    result['kicks'] = kicks
+    result['alpha'] = alpha
+    result['qcflag'] = qcflag
     result['met_cosmic'] = metallicity
     result['remnant_prescription'] = remnant_prescription
     result['binfrac'] = binfrac

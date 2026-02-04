@@ -3,22 +3,23 @@ import pandas as pd
 
 import warnings
 warnings.filterwarnings("ignore", category=pd.errors.PerformanceWarning)
-warnings.filterwarnings("ignore", category=pd.errors.SettingWithCopyWarning)
-warnings.filterwarnings("ignore", category=UserWarning)
 
 from ccsnlab.cee_rerun.merger_criteria_functions import get_criterion_func
 from ccsnlab.cee_rerun.Klencki_lambda import get_lambda
-try:
-    from cosmic.evolve import Evolve
-except ImportError:
-    raise ImportError(
-        "The rerun functionality requires COSMIC 3.5.0 to reproduce exact results. Install with:\n"
-        "    pip install 'ccsnlab[cosmic]'"
-    )
+from cosmic.evolve import Evolve
 
-def rerun_Klencki(original_bpp, original_bcm, metallicity, merger_criteria, qcflag):
+def rerun_Klencki(original_bpp, original_bcm, metallicity, merger_criteria, BSEDict, debug=False):
     """
-    Rerun a single COSMIC population with detailed CEE from Klencki+2021.
+    Rerun a single COSMIC population with detailed CEE from Klencki+2021. We require that the original population was generated with alpha=0.
+    This is because of a few reasons:
+
+    1) If the original population was filtered to only include supernova producing binaries, mergers between intermediate mass stars that
+       might be missed with a high alpha would not be recovered here, since we start with that filtered population as input.
+    2) The detailed CEE treatment will usually lead to a merger. It performs closely to an alpha=0 treatment. Since this is not really in
+       COSMIC, and it is slow, we avoid having to rerun systems that are said to merge by the Klencki treatment.
+    3) This simplifies the logic, since we can start with the base case that we are looking for anything that could survive according
+       to Klencki, and we only need to rerun those systems (and then the slow iterative process for those with later CEE).
+
     Parameters
     ----------
     original_bpp : pd.DataFrame
@@ -29,31 +30,29 @@ def rerun_Klencki(original_bpp, original_bcm, metallicity, merger_criteria, qcfl
         Metallicity of the population to rerun.
     merger_criteria : str
         The merger criteria to use ('Klencki_1.0', 'Klencki_0.7').
-    qcflag : int
-        The qcflag to use for the COSMIC evolution.
+    BSEDict : dict
+        The parameters to use for the COSMIC evolution (of course the CEE treatment will be overridden).
     """
 
-    #we do our little iterative process
     result_bpp, result_bcm = [], []
     #Lets go through each population now, and rerun as appropriate
     count = 0
     for bin_num in original_bpp.bin_num.unique():
         count += 1
-        if count % 5000 == 0: print(f'On system {count} of {len(original_bpp.bin_num.unique())}', flush=True)
+        if debug and count % 100 == 0: print(f'On system {count} of {len(original_bpp.bin_num.unique())}', flush=True)
         curr_bpp, curr_bcm = original_bpp[original_bpp.bin_num == bin_num], original_bcm[original_bcm.bin_num == bin_num]
         first_survival_time, lambdaf = find_first(curr_bpp, metallicity, merger_criteria, kind='survive')
         if first_survival_time is not None:
-            new_bpp, new_bcm = iterate_single_binary(curr_bpp, curr_bcm, metallicity, merger_criteria, first_survival_time, lambdaf, qcflag=qcflag)
+            new_bpp, new_bcm = iterate_single_binary(curr_bpp, curr_bcm, metallicity,merger_criteria,
+                                                     first_survival_time, lambdaf, BSEDict=BSEDict, debug=debug)
         else:
             new_bpp, new_bcm = curr_bpp, curr_bcm
         result_bpp.append(new_bpp)
         result_bcm.append(new_bcm)
 
     result_bpp, result_bcm = pd.concat(result_bpp, ignore_index=True), pd.concat(result_bcm, ignore_index=True)
-
-    print('All systems evolved', flush=True)
     result_bpp, result_bcm = filter_bpp_and_bcm(result_bpp, result_bcm)
-    print('Filtered bpp and bcm', flush=True)
+    print('All systems evolved, filtered bpp and bcm', flush=True)
 
     return result_bpp, result_bcm
 
@@ -78,50 +77,46 @@ def find_first(curr_bpp, metallicity, merger_criteria, kind='survive'):
     
     return None, None
 
-def iterate_single_binary(curr_bpp, curr_bcm, metallicity, merger_criteria, CEE_time, lambdaf, qcflag=4):
+def iterate_single_binary(curr_bpp, curr_bcm, metallicity, merger_criteria, CEE_time, lambdaf, BSEDict, debug=False):
     zams = curr_bpp[curr_bpp.tphys == 0.0]
     #now, we want to iteratively evolve the system until it is done
     curr_CEE_time = CEE_time
     curr_outcome = 'survive'
-    orig_bpp, orig_bcm = curr_bpp[curr_bpp.tphys <= curr_CEE_time], curr_bcm[curr_bcm.tphys <= curr_CEE_time]
+    orig_bpp, orig_bcm = curr_bpp, curr_bcm
 
     while curr_CEE_time is not None:
+        if debug: print(f'Evolving to CEE at time {curr_CEE_time} with outcome {curr_outcome}', flush=True)
         curr_bpp = curr_bpp[(curr_bpp.tphys == curr_CEE_time) & (curr_bpp.evol_type == 7)]
 
-        #Don't keep the rows after the onset of RLOF, those will be added later
-        orig_bpp, orig_bcm = orig_bpp[orig_bpp.tphys <= curr_CEE_time], orig_bcm[orig_bcm.tphys <= curr_CEE_time]
-        orig_bpp = orig_bpp[~(~(orig_bpp.evol_type.isin([3, 7])) & (orig_bpp.tphys == curr_CEE_time))]
+        #Keep the rows before, and including the current CEE onset (not the instantaneous resolution rows, i.e. only keep bpp 3,7)
+        orig_bpp = orig_bpp[(orig_bpp.tphys < curr_CEE_time) | ((orig_bpp.tphys == curr_CEE_time) & (orig_bpp.evol_type.isin([3,7])))]
+        #Keep the bcm rows before and including the current CEE onset, it is unimportant if we errantly keep an instantaneuos resolution row
+        orig_bcm =  orig_bcm[orig_bcm.tphys <= curr_CEE_time]
 
-        CEE_row = curr_bpp[curr_bpp.tphys == curr_CEE_time]
+        CEE_row = curr_bpp[(curr_bpp.tphys == curr_CEE_time) & (curr_bpp.evol_type == 7)]
         CEE_row['metallicity'] = metallicity
         CEE_row['tphysf'] = 13700.0
-        CEE_row['binfrac'] = 1.0
-        #evolve
+        CEE_row['binfrac'] = 0.6 #unimportant for rerun
+
         if curr_outcome == 'survive':
+            # continue with Klencki alpha-lambda, does not necesarily force a survival!
             alpha1 = 1.0 if merger_criteria == 'Klencki_1.0' else 0.7
             lambdaf = lambdaf
         else:
-            alpha1 = 1e-10
+            # force a merger
+            alpha1 = 0.0
             lambdaf = 0.0
         
-        bpp, bcm = evolve_population(CEE_row, alpha1=alpha1, lambdaf=lambdaf, cemergeflag=0, qcflag=qcflag)
+        # we evolve from this point, and combine with the pre-CEE evolution. This creates a new complete evolutionary history.
+        bpp, bcm = evolve_population(CEE_row, alpha1=alpha1, lambdaf=lambdaf, BSEDict=BSEDict)
         orig_bpp, orig_bcm = pd.concat([orig_bpp, bpp], ignore_index=True), pd.concat([orig_bcm, bcm], ignore_index=True)
         curr_bpp, curr_bcm = bpp, bcm
 
-        #now we want to see if there is a later CEE
-        future_merger_time, _ = find_first(pd.concat([zams, bpp]), metallicity, merger_criteria, kind='merge')
-        future_survival_time, future_lambdaf = find_first(pd.concat([zams, bpp]), metallicity, merger_criteria, kind='survive')
-        if curr_outcome == 'survive' and future_survival_time is not None and abs(future_survival_time - curr_CEE_time) < 1e-2:
-            #there was a merger that was unavoidable with the klencki alpha-lambda. This is ok, we don't need to change anything.
-            #the buffer is to avoid numerical issues that come up sometimes
-            future_survival_time = None
-            future_merger_time = None
-
-        if curr_outcome == 'merge' and future_merger_time is not None and abs(future_merger_time - curr_CEE_time) < 1e-2:
-            #there was a survival that was unavoidable with the klencki alpha-lambda. This is ok, we don't need to change anything.
-            #the buffer is to avoid numerical issues that come up sometimes
-            future_survival_time = None
-            future_merger_time = None
+        #If there was a later CEE we must check what we would have expected to happen there. We exclude a small window around the current
+        # CEE time to avoid picking up the current CEE again. This was handled, and we are looking for future CEEs.
+        bpp_to_check = curr_bpp[(curr_bpp.tphys > curr_CEE_time + 1e-2)]
+        future_merger_time, _ = find_first(pd.concat([zams, bpp_to_check]), metallicity, merger_criteria, kind='merge')
+        future_survival_time, future_lambdaf = find_first(pd.concat([zams, bpp_to_check]), metallicity, merger_criteria, kind='survive')
 
         #set the goal for the next iteration, and save the current bpp and bcm
         if future_merger_time is not None and (future_survival_time is None or future_merger_time < future_survival_time):
@@ -138,28 +133,13 @@ def iterate_single_binary(curr_bpp, curr_bcm, metallicity, merger_criteria, CEE_
 
     return orig_bpp, orig_bcm
 
-def evolve_population(initialBinaries, alpha1, lambdaf, cemergeflag=0, qcflag=4):
+def evolve_population(initialBinaries, alpha1, lambdaf, BSEDict):
     np.random.seed(16)
-
-    BSEDict =  {'xi': 1.0, 'bhflag': 1, 'neta': 0.5, 'windflag': 3,
-                'wdflag': 1, 'alpha1': alpha1, 'pts1': 0.001, 'pts3': 0.02,
-                'pts2': 0.01, 'epsnov': 0.001, 'hewind': 0.5, 'ck': 1000,
-                'bwind': 0.0, 'lambdaf': -lambdaf, 'mxns': 3.0, 'beta': -1.0, 'tflag': 1,
-                'acc2': 1.5, 'grflag' : 1, 'remnantflag': 4, 'ceflag': 0, 'eddfac': 1.0,
-                'ifflag': 0, 'bconst': 3000, 'sigma': 265.0, 'gamma': -2.0, 'pisn': 45.0,
-                'natal_kick_array' : [[-100.0,-100.0,-100.0,-100.0,0.0], [-100.0,-100.0,-100.0,-100.0,0.0]],
-                'bhsigmafrac' : 1.0, 'polar_kick_angle' : 90,
-                'qcrit_array' : [0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0],
-                'cekickflag' : 2, 'cehestarflag' : 0, 'cemergeflag' : cemergeflag, 'ecsn' : 2.25, 'ecsn_mlow' : 1.6,
-                'aic' : 1, 'ussn' : 0, 'sigmadiv' :-20.0, 'qcflag' : qcflag, 'eddlimflag' : 0,
-                'fprimc_array' : [2.0/21.0,2.0/21.0,2.0/21.0,2.0/21.0,2.0/21.0,2.0/21.0,2.0/21.0,2.0/21.0,2.0/21.0,2.0/21.0,2.0/21.0,2.0/21.0,2.0/21.0,2.0/21.0,2.0/21.0,2.0/21.0],
-                'bhspinflag' : 0, 'bhspinmag' : 0.0, 'rejuv_fac' : 1.0, 'rejuvflag' : 0, 'htpmb' : 1,
-                'ST_cr' : 1, 'ST_tide' : 1, 'bdecayfac' : 1, 'rembar_massloss' : 0.5, 'kickflag' : 1,
-                'zsun' : 0.02, 'bhms_coll_flag' : 0, 'don_lim' : -1, 'acc_lim' : -1, 'rtmsflag' : 0, 'wd_mass_lim': 1}
-    
+    BSEDict = BSEDict.copy()
+    BSEDict['alpha1'] = alpha1
+    BSEDict['lambdaf'] = lambdaf
     bpp, bcm, _, _ = Evolve.evolve(initialbinarytable=initialBinaries, BSEDict=BSEDict, timestep_conditions=[['kstar_1 >= 4', 'dtp=0.0'],
                                                                                                              ['kstar_2 >= 4', 'dtp=0.0']])
-    
     return bpp, bcm
 
 def filter_bpp_and_bcm(result_bpp, result_bcm):
