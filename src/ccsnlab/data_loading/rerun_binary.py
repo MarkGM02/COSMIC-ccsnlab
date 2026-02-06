@@ -1,22 +1,18 @@
 import pandas as pd
 import numpy as np
-try:
-    from cosmic.sample.initialbinarytable import InitialBinaryTable
-    from cosmic.evolve import Evolve
-except ImportError:
-    raise ImportError(
-        "The rerun functionality requires COSMIC 3.5.0 to reproduce exact results. Install with:\n"
-        "    pip install 'ccsnlab[cosmic]'"
-    )
+from cosmic.sample.initialbinarytable import InitialBinaryTable
+from cosmic.evolve import Evolve
 
-
-def get_init_conds_and_bse_dict(processed_df, met_cosmic, sigma, alpha, qcflag):
+def get_init_cond_and_bse_dict(processed_df, met_cosmic, kick, remnant_prescription, alpha, qcflag, binfrac):
     """Extract an init_cond dataframe and a bse_dict from a processed dataframe
        corresponding to a given metallicity and parameter set."""
     
     pop = processed_df[(processed_df.met_cosmic == met_cosmic) &
-                       (processed_df.sigma == sigma) &
-                       (processed_df.alpha1 == alpha)]
+                       (processed_df.kick == kick) &
+                       (processed_df.remnant_prescription == remnant_prescription) &
+                       (processed_df.alpha == alpha) &
+                       (processed_df.qcflag == qcflag) &
+                       (processed_df.binfrac == binfrac)]
     
     m1 = pop.zams_mass_1.values
     kstar1 = np.where(m1 < 0.7, 0, 1)
@@ -27,7 +23,6 @@ def get_init_conds_and_bse_dict(processed_df, met_cosmic, sigma, alpha, qcflag):
     sep = pop.zams_sep.values
     metallicity = pop.met_cosmic.values
     tphysf = 13700.0 * np.ones(len(m1))
-
     initC = InitialBinaryTable.InitialBinaries(
             m1 = m1,
             kstar1 = kstar1,
@@ -39,28 +34,59 @@ def get_init_conds_and_bse_dict(processed_df, met_cosmic, sigma, alpha, qcflag):
             metallicity = metallicity,
             tphysf = tphysf
         )
-    
     initC = pd.DataFrame(initC)
     initC['bin_num'] = pop.bin_num.values
 
+    #map the kick prescriptions to the right kickflag and sigma:
+    if kick == 'disberg':
+        kickflag = 5
+        sigma = 200.0 #does not get used for kickflag = 5
+    elif kick == 'sigma_200':
+        kickflag = 1
+        sigma = 200.0
+    elif kick == 'sigma_50':
+        kickflag = 1
+        sigma = 50.0
+    else:
+        raise ValueError(f"Kick model: {kick} not supported")
+    
+    #map the names of the remnant prescriptions to their cosmic flags
+    if remnant_prescription == 'fryer':
+        remnantflag = 4
+        maltsev_pf_prob = 0.0 #not used here
+    elif remnant_prescription == 'maltsev_0':
+        remnantflag = 6
+        maltsev_pf_prob = 0.0
+    elif remnant_prescription == 'maltsev_01':
+        remnantflag = 6
+        maltsev_pf_prob = 0.1
+    elif remnant_prescription == 'maltsev_1':
+        remnantflag = 6
+        maltsev_pf_prob = 1.0
+    else:
+        raise ValueError(f"Remnant prescription: {remnant_prescription} not supported")
+    
+    maltsev_mode = 0
+    maltsev_fallback = 0.5
     zsun = 0.02
-    BSEDict = {'xi': 1.0, 'bhflag': 1, 'neta': 0.5, 'windflag': 3, 'wdflag': 1,
-               'alpha1': alpha, 'pts1': 0.001, 'pts3': 0.02, 'pts2': 0.01,
-               'epsnov': 0.001, 'hewind': 0.5, 'ck': 1000, 'bwind': 0.0,
-               'lambdaf': 0.0, 'mxns': 3.0, 'beta': -1.0, 'tflag': 1,
-               'acc2': 1.5, 'grflag' : 1, 'remnantflag': 4, 'ceflag': 0,
-               'eddfac': 1.0, 'ifflag': 0, 'bconst': 3000, 'sigma': sigma,
-               'gamma': -2.0, 'pisn': 45.0,'natal_kick_array' : [[-100.0,-100.0,-100.0,-100.0,0.0], [-100.0,-100.0,-100.0,-100.0,0.0]],
-               'bhsigmafrac' : 1.0, 'polar_kick_angle' : 90, 'qcrit_array' : [0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0],
-               'cekickflag' : 2, 'cehestarflag' : 0, 'cemergeflag' : 0,
-               'ecsn' : 2.25, 'ecsn_mlow' : 1.6, 'aic' : 1, 'ussn' : 0,
-               'sigmadiv' :-20.0, 'qcflag' : qcflag, 'eddlimflag' : 0,
-               'fprimc_array' : [2.0/21.0,2.0/21.0,2.0/21.0,2.0/21.0,2.0/21.0,2.0/21.0,2.0/21.0,2.0/21.0,2.0/21.0,2.0/21.0,2.0/21.0,2.0/21.0,2.0/21.0,2.0/21.0,2.0/21.0,2.0/21.0],
-               'bhspinflag' : 0, 'bhspinmag' : 0.0, 'rejuv_fac' : 1.0,
-               'rejuvflag' : 0, 'htpmb' : 1, 'ST_cr' : 1, 'ST_tide' : 1,
-               'bdecayfac' : 1, 'rembar_massloss' : 0.5, 'kickflag' : 1,
-               'zsun' : zsun, 'bhms_coll_flag' : 0, 'don_lim' : -1,
-               'acc_lim' : -1, 'rtmsflag' : 0, 'wd_mass_lim' : 1}
+    cemergeflag = 1
+    alpha_temp = 1e-10 if alpha == 0.0 else alpha 
+
+    BSEDict  = {'pts1': 0.001, 'pts2': 0.01, 'pts3': 0.02, 'zsun': zsun, 'windflag': 3,
+                'eddlimflag': 0, 'neta': 0.5, 'bwind': 0.0, 'hewind': 0.5, 'beta': 0.125,
+                'xi': 0.5, 'acc2': 1.5, 'alpha1': alpha_temp, 'lambdaf': 0.0, 'ceflag': 1,
+                'cekickflag': 2, 'cemergeflag': cemergeflag, 'cehestarflag': 0, 'qcflag': qcflag,
+                'qcrit_array': [0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0],
+                'kickflag': kickflag, 'sigma': sigma, 'bhflag': 1, 'bhsigmafrac': 1.0, 'sigmadiv': -20.0,
+                'ecsn': 2.25, 'ecsn_mlow': 1.6, 'aic': 1, 'ussn': 1, 'pisn': -2, 'polar_kick_angle': 90.0,
+                'natal_kick_array': [[-100.0, -100.0, -100.0, -100.0, 0.0], [-100.0, -100.0, -100.0, -100.0, 0.0]],
+                'remnantflag': remnantflag, 'mxns': 3.0, 'rembar_massloss': 0.5, 'wd_mass_lim': 1,
+                'bhspinflag': 0, 'bhspinmag': 0.0, 'grflag': 1, 'eddfac': 1, 'gamma': -2,
+                'don_lim': -1, 'acc_lim': -1, 'tflag': 1, 'ST_tide': 1, 'fprimc_array': [2.0/21.0,2.0/21.0,2.0/21.0,2.0/21.0,2.0/21.0,2.0/21.0,2.0/21.0,2.0/21.0,2.0/21.0,2.0/21.0,2.0/21.0,2.0/21.0,2.0/21.0,2.0/21.0,2.0/21.0,2.0/21.0],
+                'ifflag': 1, 'wdflag': 1, 'epsnov': 0.001, 'bdecayfac': 1, 'bconst': 3000,
+                'ck': 1000, 'rejuv_fac': 1.0, 'rejuvflag': 0, 'bhms_coll_flag': 0, 'htpmb': 1,
+                'ST_cr': 1, 'rtmsflag': 0, 'maltsev_mode': maltsev_mode, 'maltsev_fallback': maltsev_fallback,
+                'maltsev_pf_prob': maltsev_pf_prob, 'mm_mu_ns': 400.0, 'mm_mu_bh': 200.0}
 
     return initC, BSEDict
 

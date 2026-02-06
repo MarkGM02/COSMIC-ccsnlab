@@ -11,7 +11,7 @@ from ccsnlab.sn_types import sn_types, sn_subtypes
 Main module to create supernova information from COSMIC output for a single population.
 """
 
-def create_sn_info(bpp, bcm, metallicity, kicks, alpha, qcflag, remnant_prescription, binfrac, sample_mass, singles_mass, n_stars, n_singles):
+def create_sn_info(bpp, bcm, metallicity, kick, alpha, qcflag, remnant_prescription, binfrac, sample_mass, singles_mass, n_stars, n_singles):
     """
     Create a dataframe with one row per binary system containing supernova and evolutionary information. All parameters besides
     the bpp and bcm are strictly around for logging. The core functionality works with dummy parameters everywhere else, however
@@ -27,7 +27,7 @@ def create_sn_info(bpp, bcm, metallicity, kicks, alpha, qcflag, remnant_prescrip
         and the row at the final timestep to faithfully classify all supernovae.
     metallicity : float
         Metallicity of the population
-    kicks : str
+    kick : str
         User created string corresponding to kick model used in run e.g. 'Sigma_50' or 'Disberg'
     alpha : float
         Common envelope efficiency parameter
@@ -299,7 +299,7 @@ def create_sn_info(bpp, bcm, metallicity, kicks, alpha, qcflag, remnant_prescrip
     result['n_singles'] = n_singles
 
     #add all the relevant varied evolution/sampling parameters for record keeping:
-    result['kicks'] = kicks
+    result['kick'] = kick
     result['alpha'] = alpha
     result['qcflag'] = qcflag
     result['met_cosmic'] = metallicity

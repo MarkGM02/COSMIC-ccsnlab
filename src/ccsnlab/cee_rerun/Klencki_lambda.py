@@ -1,7 +1,6 @@
 import numpy as np
 import pandas as pd
 
-
 def get_nearest_value(param_name, param, data):
     
     values = data[param_name].values

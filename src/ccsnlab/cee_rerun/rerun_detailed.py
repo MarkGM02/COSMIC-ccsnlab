@@ -32,6 +32,15 @@ def rerun_Klencki(original_bpp, original_bcm, metallicity, merger_criteria, BSED
         The merger criteria to use ('Klencki_1.0', 'Klencki_0.7').
     BSEDict : dict
         The parameters to use for the COSMIC evolution (of course the CEE treatment will be overridden).
+    debug : bool, optional
+        Whether to print debug information during the rerun process, by default False.
+    
+    Returns
+    -------
+    result_bpp : pd.DataFrame
+        The rerun bpp DataFrame with the Klencki CEE treatment.
+    result_bcm : pd.DataFrame
+        The rerun bcm DataFrame with the Klencki CEE treatment, filtered to include last kyr before sne + final row.
     """
 
     result_bpp, result_bcm = [], []
@@ -104,7 +113,7 @@ def iterate_single_binary(curr_bpp, curr_bcm, metallicity, merger_criteria, CEE_
             lambdaf = lambdaf
         else:
             # force a merger
-            alpha1 = 0.0
+            alpha1 = 1e-10 # effectively 0, but COSMIC does not allow 0 anymore
             lambdaf = 0.0
         
         # we evolve from this point, and combine with the pre-CEE evolution. This creates a new complete evolutionary history.
