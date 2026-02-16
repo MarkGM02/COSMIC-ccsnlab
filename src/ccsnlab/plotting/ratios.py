@@ -255,45 +255,34 @@ def plot_loss_data(ax, label_loss=True, solar=9.05):
 
     return lines
 
-def plot_I_over_II_one_curve(
-        data,
-        metallicities,
-        ax,
-        curve_label,
-        zsun=0.02,
-        bh_cap=None,
-        color='C0',
-        linestyle='-',
-        singles_only=False, linewidth=2,
-    ):
-
+def plot_I_over_II_one_curve(data,
+                             metallicities,
+                             ax,
+                             curve_label='',
+                             zsun=0.02,
+                             color='thistle',
+                             linestyle='-',
+                             linewidth=2):
+    """
+    Plot the ratio of Type I to Type II CCSNe as a function of metallicity for a single population. This function simply plots
+    all that is labelled as so, and does not do any filtering or masking, this should be done outside the function.
+    
+    :param data: DataFrame containing the sn_info which is formatted with all the appropriate columns created by ccsnlab.data_loading.process_raw.
+    This should already be filtered to only include the population you want to plot.
+    :param metallicities: List of metallicities to plot.
+    :param ax: Matplotlib axis object to plot on.
+    :param curve_label: Label for the curve.
+    :param zsun: Solar metallicity value to normalize the plot's COSMIC metallicity values.
+    :param color: Color of the curve.
+    :param linestyle: Line style of the curve.
+    :param linewidth: Line width of the curve.
+    """
+    
     ratios = []
     for Z in metallicities:
         sub = data[data['met_cosmic'] == Z]
-
-        # SN 1
-        sn1_types = sub['sn_1_type']
-        singles_mask = sub['is_single'] if singles_only else np.ones(len(sub), dtype=bool)
-
-        if bh_cap is not None:
-            sn1_mask = (sub['sn_1_remnant_mass'] <= bh_cap)
-        else:
-            sn1_mask = np.ones(len(sub), dtype=bool)
-        
-        sn1_types = sn1_types[(sn1_mask) & (singles_mask)]
-
-        # SN 2
-        sn2_types = pd.Series()
-
-        if not singles_only:
-            sn2_types = sub['sn_2_type']
-            if bh_cap is not None:
-                sn2_mask = sub['sn_2_remnant_mass'] <= bh_cap
-            else:
-                sn2_mask = np.ones(len(sub), dtype=bool)
-            
-            sn2_types = sn2_types[sn2_mask]
-
+        sn1_types = sub.sn_1_type
+        sn2_types = sub.sn_2_type
         n_I = len(sn1_types[sn1_types == 'I']) + len(sn2_types[sn2_types == 'I'])
         n_II = len(sn1_types[sn1_types == 'II']) + len(sn2_types[sn2_types == 'II'])
         ratios.append(n_I / n_II if n_II else np.nan)
@@ -303,51 +292,155 @@ def plot_I_over_II_one_curve(
                    color=color, linestyle=linestyle, linewidth=linewidth)
     return line[0]
 
-def plotting(zsun, ax, data, legend=True, plot_singles=False,
-             singles_color=None, singles_label=None, plot_orig=False,
-             orig_color=None, orig_label=None, bh_cap=None, sigma=265.0,
-             alpha1=1.0, change_IIbs=False, linewidth=2, legend_cols=1,
-             dot_binaries=False, legend_name = None):
+def plot_variations(zsun,
+                    ax,
+                    sn_info,
+                    variation='',
+                    variation_values=[],
+                    variation_labels=[],
+                    variation_colors=[],
+                    linewidths=[],
+                    binfrac='',
+                    kicks='disberg',
+                    alpha=1.0,
+                    qcflag=5,
+                    change_IIbs=False,
+                    explosion_criteria='maltsev'):
+    
+    """
+    Docstring for plot_variations
+    
+    :param zsun: Solar metallicity value to normalize the plot's COSMIC metallicity values.
+    :param ax: Matplotlib axis object to plot on.
 
-    data = data[(data.sigma == sigma) & (data.alpha1 == alpha1)]
+    :param sn_info: DataFrame containing the sn_info which is formatted with all the appropriate columns created by ccsnlab.data_loading.process_raw.
+    :param variation: String indicating the type of variation to plot (these are 'binfrac', 'sigma').
+    :param variation_values: List of values for the specified variation.
+    :param variation_labels: List of labels corresponding to the variation values.
+    :param variation_colors: List of colors corresponding to the variation values.
 
+    :param binfrac: The binary fraction for which all variations are plotted.
+    :param kicks: A tuple of (kickflag, sigma) for the variations.
+    :param alpha: The alpha common envelope efficiency parameter for the variations.
+    :param qcflag: The qcflag value for the variations.
+
+    :param change_IIbs: Whether to change the SN types to include IIb in Type I for the variations.
+    :param explosion_criteria: A string indictaing the explosion crieria. Now we support 'maltsev' or a string of an int e.g. '15' which suggests all
+    explosions with co masses less than 15 msun explode.
+    """
+
+    # If the variations are not set to None, then we exclusively select the part of the DataFrame that matches
+    kickflag, sigma = kicks
+    binfrac_mask = pd.Series(True, index=sn_info.index) if not binfrac else sn_info['binfrac'] == binfrac
+    kickflag_mask = pd.Series(True, index=sn_info.index) if not kickflag else sn_info['kickflag'] == kickflag
+    sigma_mask = pd.Series(True, index=sn_info.index) if not sigma else sn_info['sigma'] == sigma
+    alpha_mask = pd.Series(True, index=sn_info.index) if not alpha else sn_info['alpha1'] == alpha
+    qcflag_mask = pd.Series(True, index=sn_info.index) if not qcflag else sn_info['qcflag'] == qcflag
+    keep_mask = binfrac_mask & kickflag_mask & sigma_mask & alpha_mask & qcflag_mask
+    data = sn_info[keep_mask].copy()
+    
+    # If we are changing the IIbs, we simply overwrite the SN types in the DataFrame
     if change_IIbs:
-        # Change the SN types to include IIb in Type I
         IIb_sn1_mask = data['sn_1_subtype'] == 'IIb'
         IIb_sn2_mask = data['sn_2_subtype'] == 'IIb'
-
-        # change the strict sn types to include IIb in Type I
         data.loc[IIb_sn1_mask, 'sn_1_type'] = 'I'
         data.loc[IIb_sn2_mask, 'sn_2_type'] = 'I'
+
+    # To apply the explosion criteria, we simply overwrite the SN types to None for all unsuccesful explosions
+    if explosion_criteria == 'maltsev':
+        pass #implement later
+    elif explosion_criteria.isdigit():
+        co_mass_threshold = float(explosion_criteria)
+        explosion_mask_sn1 = data['sn_1_remnant_mass'] <= co_mass_threshold
+        explosion_mask_sn2 = data['sn_2_remnant_mass'] <= co_mass_threshold
+        data.loc[~explosion_mask_sn1, 'sn_1_type'] = None
+        data.loc[~explosion_mask_sn2, 'sn_2_type'] = None
+    else:
+        raise ValueError(f"Unsupported explosion criteria: {explosion_criteria}")
     
-    Zgrid = np.sort(data['met_cosmic'].unique())
-
-    singles_singles_only = True
-    singles_linestyle = '--'
-
-    orig_singles_only = False
-    orig_linestyle = ':' if dot_binaries else '-'
-
+    # now all we have left to do is plot each of the variations in a loop, and return a list of the lines we plotted
     lines = []
-
-    for color, curve_label, singles_only, plot, linestyle in zip(
-                                                                                    [singles_color,        orig_color],
-                                                                                    [singles_label,        orig_label],
-                                                                                    [singles_singles_only, orig_singles_only],
-                                                                                    [plot_singles,         plot_orig],
-                                                                                    [singles_linestyle,    orig_linestyle]
-                                                                                    ):
-        if not plot: continue
-        line = plot_I_over_II_one_curve(data, Zgrid, ax, curve_label,
-                                        color=color, linestyle=linestyle, zsun=zsun, linewidth=linewidth,
-                                        singles_only=singles_only, bh_cap=bh_cap)
+    for var_value, var_label, var_color, linewidth in zip(variation_values, variation_labels, variation_colors, linewidths):
+        # kicks are supplied as a tuple of (kickflag, sigma)
+        if variation == 'kicks':
+            kickflag, sigma = var_value
+            kickflag_mask = data['kickflag'] == kickflag
+            sigma_mask = data['sigma'] == sigma if sigma else pd.Series(True, index=data.index)
+            keep_mask = kickflag_mask & sigma_mask
+            var_value_data = data[keep_mask]
+        # other variations are just a variation of a single column
+        else:
+            var_value_data = data[data[variation] == var_value]
+        
+        line = plot_I_over_II_one_curve(var_value_data,
+                                        var_value_data.met_cosmic.unique(),
+                                        ax,
+                                        curve_label=var_label,
+                                        zsun=zsun,
+                                        color=var_color,
+                                        linestyle='-',
+                                        linewidth=linewidth)
         lines.append(line)
 
-    if legend:
-        leg = ax.legend(loc='upper left', ncols=legend_cols, title = legend_name, fontsize=LEGEND_FONT_SIZE, title_fontsize=LEGEND_FONT_SIZE)
     return lines
 
+def plot_binfracs(ax,
+                  data,
+                  zsun = 0.02, 
+                  solar = 9.05,
+                  binfracs = ['0.0', '0.6', 'offner23'],
+                  labels = ['0% (singles only)', '60%', 'Offner+23']):
+    
+    """
+    Function which wraps plot_variations which plots the effect of changing the binary fraction.
+    
+    :param ax: Matplotlib axis object to plot on.
+    :param data: DataFrame containing the sn_info which is formatted with all the appropriate columns created by ccsnlab.data_loading.process_raw.
+    :param zsun: Solar metallicity value to normalize the plot's COSMIC metallicity values.
+    :param solar: Solar metallicity value for the plot.
+    :param binfracs: List of binary fractions to plot.
+    :param labels: List of labels for the binary fractions.
+    """
+    
+    #One plot is the fiducial model with mass caps
+    binfrac_colors = ['#d16ba5', '#c297ec', '#90c6ff', '#41f2ff']
+    cmap = LinearSegmentedColormap.from_list("my_colormap", binfrac_colors)
+    binfrac_colors = [cmap(i / len(binfracs)) for i in range(len(binfracs))]
+    
+    lines = plot_variations(zsun,
+                            ax,
+                            data,
+                            legend=False,
+                            variation='binfrac',
+                            variation_values=binfracs,
+                            variation_labels=labels,
+                            variation_colors=binfrac_colors,
+                            kicks='disberg',
+                            alpha=1.0,
+                            qcflag=5,
+                            change_IIbs=False,
+                            explosion_criteria='maltsev')
+    
+    #add a legend for the COSMIC data
+    legend = ax.legend(handles=lines, loc='upper left', title='Binary Fraction', fontsize=LEGEND_FONT_SIZE, title_fontsize=LEGEND_FONT_SIZE)
+    ax.add_artist(legend)
+    
+    #add a legend for the loss data
+    data = plot_loss_data(ax, label_loss=True, solar=solar)
+    ax.legend(handles=data, loc='upper center', bbox_to_anchor=(0.57, 0.86),
+              labels=[r'KK12, $Z$, (Ibc+IIb)/II', 'G17 Ibc/(II+IIb)'], title='SN Survey Data',
+              fontsize=LEGEND_FONT_SIZE, title_fontsize=LEGEND_FONT_SIZE)
+
+
 def plot_mass_caps(ax, fiducial_data, zsun=0.02, solar=9.05):
+    """
+    Function which wraps plot_variations which plots the effect of changing the remnant mass cap.
+    
+    :param ax: Matplotlib axis object to plot on.
+    :param fiducial_data: DataFrame containing the sn_info which is formatted with all the appropriate columns created by ccsnlab.data_loading.process_raw.
+    :param zsun: Solar metallicity value to normalize the plot's COSMIC metallicity values.
+    :param solar: Solar metallicity value for the plot.
+    """
     #One plot is the fiducial model with mass caps
     mass_caps = [3.0, 4.0, 5.0, 15.0, 100.0]
     mass_cap_colors = ['#d16ba5', '#c297ec', '#90c6ff', '#41f2ff']
@@ -379,7 +472,7 @@ def plot_mass_caps(ax, fiducial_data, zsun=0.02, solar=9.05):
     #add a legend for the loss data
     data = plot_loss_data(ax, label_loss=True, solar=solar)
     ax.legend(handles=data, loc='upper center', bbox_to_anchor=(0.57, 0.86),
-              labels=[r'KK12, $Z$, (Ibc+IIb)/II', 'G17 Ibc/(II+IIb)'], title='SN survey data',
+              labels=[r'KK12, $Z$, (Ibc+IIb)/II', 'G17 Ibc/(II+IIb)'], title='SN Survey Data',
               fontsize=LEGEND_FONT_SIZE, title_fontsize=LEGEND_FONT_SIZE)
 
 
