@@ -6,12 +6,14 @@ import pandas as pd
 warnings.filterwarnings('ignore', category=pd.errors.PerformanceWarning)
 
 from ccsnlab.sn_types import sn_types, sn_subtypes
+from ccsnlab.data_loading.delayed_fryer import get_remnant_mass, neutrino_mass_loss
+from ccsnlab.data_loading.maltsev import get_masses
 
 """
 Main module to create supernova information from COSMIC output for a single population.
 """
 
-def create_sn_info(bpp, bcm, metallicity, kick, alpha, qcflag, remnant_prescription, binfrac, sample_mass, singles_mass, n_stars, n_singles):
+def create_sn_info(bpp, bcm, metallicity, BSEDICT, binfrac, sample_mass, singles_mass, n_stars, n_singles):
     """
     Create a dataframe with one row per binary system containing supernova and evolutionary information. All parameters besides
     the bpp and bcm are strictly around for logging. The core functionality works with dummy parameters everywhere else, however
@@ -27,14 +29,9 @@ def create_sn_info(bpp, bcm, metallicity, kick, alpha, qcflag, remnant_prescript
         and the row at the final timestep to faithfully classify all supernovae.
     metallicity : float
         Metallicity of the population
-    kick : str
-        User created string corresponding to kick model used in run e.g. 'Sigma_50' or 'Disberg'
-    alpha : float
-        Common envelope efficiency parameter
-    qcflag : int
-        Critical mass ratio flag in COSMIC
-    remnant_prescription : str
-        Prescription for calculating remnant masses
+    BSEDICT : dict
+        Dictionary containing binary star evolution parameters used for the simulation, accuracy is important for record keeping, and 
+        essential for the handling of the ejecta profile, which is dependent on the remnantflag, and corresponding parameters.
     binfrac : float
         Binary fraction of the population
     sample_mass : float
@@ -94,8 +91,8 @@ def create_sn_info(bpp, bcm, metallicity, kick, alpha, qcflag, remnant_prescript
             Which star was last to donate mass before SN1 (primary or secondary)
         - sn_1_merger : bool
             Whether primary underwent merger before SN1
-        - sn_1_bh, sn_1_ns : bool
-            Whether primary remnant is black hole or neutron star
+        - sn_1_ns : bool
+            Whether primary remnant is a neutron star
 
         **Supernova 2 (Secondary) Properties:**
         - Similar structure to SN 1 columns, but for the secondary star
@@ -113,6 +110,7 @@ def create_sn_info(bpp, bcm, metallicity, kick, alpha, qcflag, remnant_prescript
     #bcm manipulation first - get the merger SN_1 and SN_2, as well as the merger type
     max_time = bcm.tphys.max()
     bcm_final_rows = bcm[bcm['tphys'] == max_time][['bin_num', 'SN_1', 'SN_2', 'merger_type']]
+    bcm_final_rows = bcm_final_rows.drop_duplicates(subset='bin_num', keep='last')
 
     #now bpp manipulation - get information at each supernova
     primary_sne =   bpp[bpp['evol_type'] == 15]
@@ -235,10 +233,10 @@ def create_sn_info(bpp, bcm, metallicity, kick, alpha, qcflag, remnant_prescript
     result.loc[no_sn1_mask, 'SN_1'] = 0
     result.loc[no_sn2_mask, 'SN_2'] = 0
 
-    # COSMIC housekeeping. Identify ECSNe incorrectly labelled, these produce small remnants via the branch in the remnant prescription.
-    ns_mass_from_ecsn_in_the_delayed_fryer_prescription = 6.6666667*(np.sqrt(1.0 + 0.3* 1.38) - 1.0)
-    sn_1_ecsn_mask = result['sn_1_remnant_mass'] <= ns_mass_from_ecsn_in_the_delayed_fryer_prescription
-    sn_2_ecsn_mask = result['sn_2_remnant_mass'] <= ns_mass_from_ecsn_in_the_delayed_fryer_prescription
+    # COSMIC housekeeping. Identify ECSNe incorrectly labelled, these produce hardcoded 1.38 Msun NSs, which are reduced according to rembar_massloss.
+    min_ns_mass = neutrino_mass_loss(1.38, rembar_massloss=BSEDICT['rembar_massloss'])
+    sn_1_ecsn_mask = result['sn_1_remnant_mass'] <= min_ns_mass
+    sn_2_ecsn_mask = result['sn_2_remnant_mass'] <= min_ns_mass
     result['SN_1'] = np.where(sn_1_ecsn_mask, 2, result['SN_1'])
     result['SN_2'] = np.where(sn_2_ecsn_mask, 2, result['SN_2']) 
 
@@ -252,10 +250,28 @@ def create_sn_info(bpp, bcm, metallicity, kick, alpha, qcflag, remnant_prescript
     result['sn_1_ns'] = result['bin_num'].isin(ns1_bin_nums)
     result['sn_2_ns'] = result['bin_num'].isin(ns2_bin_nums)
 
-    #Now begins the section where we calculate the ejecta profile. This is easier now that COSMIC tracks co and he core mass!
-    for sn in (1,2):
-        # ejecta mass = total mass - remnant mass, limited to 0
-        result[f'sn_{sn}_m_ejecta'] = (result[f'sn_{sn}_mass_{sn}'] - result[f'sn_{sn}_remnant_mass']).clip(lower=0)
+    # Now begins the section where we calculate the ejecta profile. This requires us to know the details of the remnant prescription. As
+    # of now, we only support the delayed Fryer (remnantflag=4), and the Maltsev (remnantflag=6) prescriptions, and all else could be added later.
+    # We assume now that the maltsev prescription is used strictly with rembar_massloss = 0, so that 
+    for sn in (1, 2):
+        if BSEDICT['remnantflag'] == 4:
+            _, neutrino_loss = zip(*result.apply(lambda row: get_remnant_mass(row[f'sn_{sn}_massc_co_layer_{sn}'],
+                                                                              row[f'sn_{sn}_mass_{sn}'],
+                                                                              rembar_massloss=BSEDICT['rembar_massloss']),
+                                                                              axis=1))
+            neutrino_loss = pd.Series(neutrino_loss).clip(lower=0) #make sure no negative neutrino mass loss somehow
+        elif BSEDICT['remnantflag'] == 6:
+            # we take the remnant mass as is, and assume no neutrino mass loss
+            neutrino_loss = np.ones(len(result)) * 0
+        else:
+            raise NotImplementedError(f"Remnant flag {BSEDICT['remnantflag']} not supported for ejecta profile calculation")
+        
+        # the ejecta mass is total mass - remnant mass - neutrino mass loss.
+        m_ejecta = (result[f'sn_{sn}_mass_{sn}'] - result[f'sn_{sn}_remnant_mass'] - neutrino_loss).clip(lower=0)
+
+        #write in the ejecta mass and the neutrino mass loss
+        result[f'sn_{sn}_m_ejecta'] = m_ejecta
+        result[f'sn_{sn}_m_neutrino_loss'] = neutrino_loss
 
     #now we determine H ejecta by assuming that this is the minimum of the combined envelope mass and the total ejecta mass
     for sn in (1, 2):
@@ -288,22 +304,80 @@ def create_sn_info(bpp, bcm, metallicity, kick, alpha, qcflag, remnant_prescript
         result[f'sn_{sn}_m_he_ejecta'] = m_Helium_ejecta
         result[f'sn_{sn}_m_co_ejecta'] = m_CO_ejecta
 
-    #Call our sn_types and sn_subtypes functions to classify the SNe
+    # Call our sn_types and sn_subtypes functions to classify the SNe
     result = sn_types(result)
     result = sn_subtypes(result)
+
+    # Last SN thing: If this population has remnantflag = 6 (Maltsev), we should clarify what region this falls into, such that succesful
+    # CCSNe can easily be identified by masking those which are not direct collapses.
+
+    for sn in (1, 2):
+        # if the string contains 0 or 1, it is a case a
+        case_a_mask = result[f'sn_{sn}_donor_kstars'].str.contains('0|1', regex=True)
+        # if the string contains 2, 3, or 4, it is a case b
+        case_b_mask = result[f'sn_{sn}_donor_kstars'].str.contains('2|3|4', regex=True)
+        # if the string contains 5 or 6, it is a case c
+        case_c_mask = result[f'sn_{sn}_donor_kstars'].str.contains('5|6', regex=True)
+
+        # we take the first case of mass transfer that occurs, so we prioritize case a over b over c. If no mass transfer occurs, we label this as "S" for single.
+        result[f'sn_{sn}_maltsev_case'] = np.where(case_a_mask, 'A', np.where(case_b_mask, 'B', np.where(case_c_mask, 'C', 'S')))
+
+        # lastly, if kstar at core collapse is [7,8,9] and there was no mas transferm we call this case b
+        stripped_mask = result[f'sn_{sn}_kstar_{sn}'].isin([7, 8, 9])
+        no_mt_mask = ~ (case_a_mask | case_b_mask | case_c_mask)
+        result[f'sn_{sn}_maltsev_case'] = np.where(stripped_mask & no_mt_mask, 'B', result[f'sn_{sn}_maltsev_case'])
+
+        # great, now for the sake of computation, lets grab each of the massses a single time
+        masses_a = get_masses(metallicity / 0.02, 'A', maltsev_mode=BSEDICT['maltsev_mode'])
+        masses_b = get_masses(metallicity / 0.02, 'B', maltsev_mode=BSEDICT['maltsev_mode'])
+        masses_c = get_masses(metallicity / 0.02, 'C', maltsev_mode=BSEDICT['maltsev_mode'])
+        masses_s = get_masses(metallicity / 0.02, 'S', maltsev_mode=BSEDICT['maltsev_mode'])
+
+        # now we can map by case, and then we can assign the region as "NS", "Direct BH", or "NS/BH"
+        def assign_region(row):
+            case = row[f'sn_{sn}_maltsev_case']
+            mass = row[f'sn_{sn}_massc_co_layer_{sn}']
+
+            if case == 'A':
+                m1, m2, m3 = masses_a
+            elif case == 'B':
+                m1, m2, m3 = masses_b
+            elif case == 'C':
+                m1, m2, m3 = masses_c
+            elif case == 'S':
+                m1, m2, m3 = masses_s
+            else:
+                raise ValueError("Invalid case")
+            
+            if mass < m1:
+                return 'NS'
+            elif mass < m2:
+                return 'Direct BH'
+            elif mass < m3:
+                return 'NS/BH'
+            else:
+                return 'Direct BH'
+
+        result[f'sn_{sn}_maltsev_region'] = result.apply(assign_region, axis=1) 
 
     #add the total sample mass, singles mass, and n_stars to each
     result['sample_mass'] = sample_mass
     result['singles_mass'] = singles_mass
     result['n_stars'] = n_stars
     result['n_singles'] = n_singles
-
-    #add all the relevant varied evolution/sampling parameters for record keeping:
-    result['kick'] = kick
-    result['alpha'] = alpha
-    result['qcflag'] = qcflag
-    result['met_cosmic'] = metallicity
-    result['remnant_prescription'] = remnant_prescription
     result['binfrac'] = binfrac
 
+    #add all the relevant varied evolution/sampling parameters for record keeping:
+    result['remnantflag'] = BSEDICT['remnantflag']
+    result['maltsev_mode'] = BSEDICT['maltsev_mode']
+    result['maltsev_fallback'] = BSEDICT['maltsev_fallback']
+    result['maltsev_pf_prob'] = BSEDICT['maltsev_pf_prob']
+    result['rembar_massloss'] = BSEDICT['rembar_massloss']
+
+    result['kickflag'] = BSEDICT['kickflag']
+    result['sigma'] = BSEDICT['sigma']
+    result['alpha'] = BSEDICT['alpha1']
+    result['qcflag'] = BSEDICT['qcflag']
+
+    result['met_cosmic'] = metallicity
     return result
