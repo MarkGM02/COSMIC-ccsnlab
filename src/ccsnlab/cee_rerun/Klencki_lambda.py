@@ -1,10 +1,9 @@
 import numpy as np
 import pandas as pd
+from importlib import resources
 
 def get_nearest_value(param_name, param, data):
-    
-    values = data[param_name].values
-    
+        
     if param_name == '#M/Msun':
         closest_index = (data[param_name] - param).abs().idxmin()        
     else:
@@ -35,7 +34,8 @@ def get_coeffs(r, M, Z, data):
         return row['a3'], row['b3'], row['c3'], row['d3']
         
 def get_lambda(r, M, Z):
-    data = pd.read_csv("lambda_R_fit.dat", sep='\s+', header='infer', skiprows=1)
+    with resources.files("ccsnlab.cee_rerun").joinpath("lambda_R_fit.dat") as path:
+        data = pd.read_csv(path, sep='\s+', header='infer', skiprows=1)
     a, b, c, d = get_coeffs(r, M, Z, data)
     log_lambda = a*np.log10(r)**3 + b*np.log10(r)**2 + c*np.log10(r) + d
     return 10**log_lambda if log_lambda < 10 else 10**10

@@ -28,3 +28,6 @@ packages = ["src/ccsnlab"]
 
 [project.scripts]
 cee-rerun = "ccsnlab.cee_rerun.pipeline:main"
+
+[tool.setuptools.package-data]
+ccsnlab = ["cee_rerun/*.dat"]
