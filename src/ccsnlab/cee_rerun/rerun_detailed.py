@@ -142,13 +142,18 @@ def iterate_single_binary(curr_bpp, curr_bcm, metallicity, merger_criteria, CEE_
 
     return orig_bpp, orig_bcm
 
+
 def evolve_population(initialBinaries, alpha1, lambdaf, BSEDict):
     np.random.seed(16)
     BSEDict = BSEDict.copy()
     BSEDict['alpha1'] = alpha1
     BSEDict['lambdaf'] = lambdaf
+    #collapse massc_he_layer and massc_co_layer into massc, since COSMIC does not have seperate layers in the initial binary table
+    initialBinaries['massc_1'] = initialBinaries['massc_he_layer_1'] + initialBinaries['massc_co_layer_1']
+    initialBinaries['massc_2'] = initialBinaries['massc_he_layer_2'] + initialBinaries['massc_co_layer_2']
     bpp, bcm, _, _ = Evolve.evolve(initialbinarytable=initialBinaries, BSEDict=BSEDict, timestep_conditions=[['kstar_1 >= 4', 'dtp=0.0'],
-                                                                                                             ['kstar_2 >= 4', 'dtp=0.0']])
+                                                                                                             ['kstar_2 >= 4', 'dtp=0.0']],
+                                                                                                             randomseed=initialBinaries.bin_num.values)
     return bpp, bcm
 
 def filter_bpp_and_bcm(result_bpp, result_bcm):
