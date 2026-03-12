@@ -1,4 +1,6 @@
 import warnings
+
+from pyparsing import col
 warnings.filterwarnings('ignore', category=RuntimeWarning)
 
 import numpy as np
@@ -212,6 +214,7 @@ def create_sn_info(bpp, bcm, metallicity, BSEDICT, binfrac, sample_mass, singles
         return result
 
     interaction_df = create_interaction_df(bpp)
+    random_seeds = bpp[['bin_num', 'randomseed']].drop_duplicates('bin_num', keep='first')
 
     #combine all via bin_num
     result = pd.merge(bcm_final_rows, zams, on='bin_num', how='left')
@@ -226,6 +229,7 @@ def create_sn_info(bpp, bcm, metallicity, BSEDICT, binfrac, sample_mass, singles
     result = pd.merge(result, accretor_kstars_1, on='bin_num', how='left')
     result = pd.merge(result, accretor_kstars_2, on='bin_num', how='left')
     result = pd.merge(result, interaction_df, on='bin_num', how='left')
+    result = pd.merge(result, random_seeds, on='bin_num', how='left')
 
     #fix the SN_1 and SN_2 where there is no actual SN, these come from mergers which get called a SN in COSMIC in some cases
     no_sn1_mask = np.isnan(result['sn_1_time'])
@@ -313,11 +317,12 @@ def create_sn_info(bpp, bcm, metallicity, BSEDICT, binfrac, sample_mass, singles
 
     for sn in (1, 2):
         # if the string contains 0 or 1, it is a case a
-        case_a_mask = result[f'sn_{sn}_donor_kstars'].str.contains('0|1', regex=True)
+        col = result[f'sn_{sn}_donor_kstars'].astype(str)
+        case_a_mask = col.str.contains('0|1', regex=True)
         # if the string contains 2, 3, or 4, it is a case b
-        case_b_mask = result[f'sn_{sn}_donor_kstars'].str.contains('2|3|4', regex=True)
+        case_b_mask = col.str.contains('2|3|4', regex=True)
         # if the string contains 5 or 6, it is a case c
-        case_c_mask = result[f'sn_{sn}_donor_kstars'].str.contains('5|6', regex=True)
+        case_c_mask = col.str.contains('5|6', regex=True)
 
         # we take the first case of mass transfer that occurs, so we prioritize case a over b over c. If no mass transfer occurs, we label this as "S" for single.
         result[f'sn_{sn}_maltsev_case'] = np.where(case_a_mask, 'A', np.where(case_b_mask, 'B', np.where(case_c_mask, 'C', 'S')))
@@ -380,4 +385,33 @@ def create_sn_info(bpp, bcm, metallicity, BSEDICT, binfrac, sample_mass, singles
     result['qcflag'] = BSEDICT['qcflag']
 
     result['met_cosmic'] = metallicity
+
+    # ---------------------------------
+    # FORCE STABLE OUTPUT SCHEMA
+    # ---------------------------------
+
+    EXPECTED_SCHEMA = {
+        # Integers
+        'sn_1_kstar_1': 'int64',
+        'sn_1_kstar_2': 'int64',
+
+        # Strings
+        'sn_1_donor_kstars': 'object',
+        'sn_2_donor_kstars': 'object',
+        'sn_1_accretor_kstars': 'object',
+        'sn_2_accretor_kstars': 'object',
+    }
+
+    for col, dtype in EXPECTED_SCHEMA.items():
+        if col in result.columns:
+            if dtype == 'int64':
+                result[col] = (
+                    pd.to_numeric(result[col], errors='coerce')
+                    .fillna(-1)
+                    .astype('int64')
+                )
+            elif dtype == 'object':
+                result[col] = result[col].astype(str)
+
+
     return result

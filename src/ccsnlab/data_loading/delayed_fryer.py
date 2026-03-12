@@ -1,8 +1,6 @@
 #Solving the delayed fryer remnant mass prescription for the original CO core mass
 
 import numpy as np
-import matplotlib.pyplot as plt
-from scipy.optimize import fsolve
 
 def get_proto_core_mass(core_mass):
     """
@@ -47,7 +45,7 @@ def get_remnant_mass(core_mass, total_mass, rembar_massloss=0.5):
     :param rembar_massloss: The maximum mass loss due to neutrinos. If positive, this is an absolute mass limit. If negative, this is a fraction of the remnant mass.
     :return: A tuple containing the final remnant mass and the mass lost to neutrinos.
     """
-    final_mass = None
+
     proto_core_mass = get_proto_core_mass(core_mass)
     if core_mass < 2.5:
         remnant_mass = proto_core_mass + 0.2
@@ -61,7 +59,7 @@ def get_remnant_mass(core_mass, total_mass, rembar_massloss=0.5):
     else:
         remnant_mass = total_mass
 
-    remnant_mass_final = neutrino_mass_loss(final_mass, rembar_massloss=rembar_massloss)
+    remnant_mass_final = neutrino_mass_loss(remnant_mass, rembar_massloss=rembar_massloss)
     mass_lost_to_neutrinos = remnant_mass - remnant_mass_final
 
     return remnant_mass_final, mass_lost_to_neutrinos
