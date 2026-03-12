@@ -13,197 +13,194 @@ FIG_WIDTH = 30
 FIG_HEIGHT = 14
 DPI = 300
 
-#The fiducial values for the delay time figures
-default_sigma = 265.0
-default_alpha1 = 1.0
-default_metallicity = 0.020243
+def filter_and_mask_sne(data,
+                        binfrac='offner23',
+                        kicks=(5, None),
+                        alpha=1.0,
+                        qcflag=5,
+                        remnantflag=6,
+                        fryer_limit=('sn_1_remnant_mass', 'sn_2_remnant_mass', 3),
+                        met_cosmic=0.02):
+    
+    binfrac_mask = data.binfrac == binfrac
+    kickflag_mask = data.kickflag == kicks[0]
+    sigma_mask = data.sigma == kicks[1] if kicks[1] != None else pd.Series(True, index=data.index)
+    alpha_mask = data.alpha == alpha
+    qcflag_mask = data.qcflag == qcflag
+    remnantflag_mask = data.remnantflag == remnantflag
+    met_cosmic_mask = data.met_cosmic == met_cosmic
+    keep_mask = binfrac_mask & kickflag_mask & sigma_mask & alpha_mask & qcflag_mask & remnantflag_mask & met_cosmic_mask
+    data = data[keep_mask].copy()
 
-#I'm proud of these colormaps but feel free to use (:
-supernova_colormaps = {
-        "II": LinearSegmentedColormap.from_list('custom_cmap', ["#df3fdf", "#f17db3", "#ff5549", '#ffa325']),
-        "I":  LinearSegmentedColormap.from_list('custom_cmap', ["#4382d4", '#11d6d6', '#00ff83', '#74d600', '#adff00']),  
-        "ECSN":                         plt.get_cmap("copper"),
-        "AIC":                          plt.get_cmap("cool"),
-        "All":     LinearSegmentedColormap.from_list('custom_cmap', ['#d16ba5', '#c297ec', '#90c6ff', '#41f2ff'])
-}
-
-#Use the color bar based on param name
-def get_index(param_name, param_value, min_param, max_param):
-    if param_name == 'alpha1' or param_name == 'metallicity':
-        norm_idx = (np.log10(param_value) - np.log10(min_param)) / (np.log10(max_param) - np.log10(min_param))
-    elif param_name == 'remnant_type':
-        norm_idx = 0.0 if param_value == 'NS' else 1.0
+    #mask out the CCSNe considered to not explode:
+    if remnantflag == 6:
+        #mask on maltsev_region
+        explodes_mask_1 = data.sn_1_maltsev_region != 'Direct BH'
+        explodes_mask_2 = data.sn_2_maltsev_region != 'Direct BH'
+    elif remnantflag == 4:
+        #mask on the columns provided in fryer_limit
+        col_1, col_2, limit = fryer_limit
+        explodes_mask_1 = data[col_1] < limit
+        explodes_mask_2 = data[col_2] < limit
     else:
-        norm_idx = (param_value - min_param) / (max_param - min_param)
-    return norm_idx
+        raise ValueError(f"Invalid remnantflag {remnantflag} provided. Must be 4 or 6.")
+    # overwrite the sn_types as None where there is no explosion
+    data.loc[~explodes_mask_1, 'sn_1_type'] = None
+    data.loc[~explodes_mask_2, 'sn_2_type'] = None
 
-#Plot histograms across a varied param -- including alpha, sigma, metallicity, or remnant type
-def plot_single_delay_histogram(data, varied_things, varied_thing_name, sn_types,
-                                ax, linestyle = '-', singles_only=False,
-                                sn_cmaps=supernova_colormaps,
-                                what_is_all = ['I', 'II'], bin_range=(1, 1000),
-                                histtype='step', alpha=1.0, linewidth=2, remcap=15.0):
-    
-    #grab only the data we want to plot
-    if singles_only:
-        data = data[data['is_single']]
+    return data
 
-    bins = np.logspace(np.log10(bin_range[0]), np.log10(bin_range[1]), 30)
+def plot_single_delay_histogram(data,
+                                ax,
+                                binfrac='offner23',
+                                kicks=(5, None),
+                                alpha=1.0,
+                                qcflag=5,
+                                remnantflag=6,
+                                fryer_limit=('sn_1_remnant_mass', 'sn_2_remnant_mass', 3),
+                                met_cosmic=0.02,
+                                sn_types_to_include = ['I', 'II'],
+                                linestyle = '-',
+                                linewidth=2,
+                                mask_list = None,
+                                labels = None,
+                                color_list = ['black'],
+                                histtype='step',
+                                bin_range=(1, 1000),
+                                n_bins=30):
 
-    #iterate over the variations. This is either metallicity/sigma/alpha (different pops) -- or remnant mass cap (same pop)
-    plot_data = []
-    plot_weights = []
-    plot_colors = []
-    plot_labels = []
+    filtered_data = filter_and_mask_sne(data, binfrac, kicks, alpha, qcflag, remnantflag, fryer_limit, met_cosmic)
+    data_list = []
+    weight_list = []
 
-    for thing in varied_things:
-        
-        if varied_thing_name != 'Klencki':
-            norm_idx = get_index(varied_thing_name, thing, np.min(varied_things), np.max(varied_things)) if varied_thing_name != 'remnant_type' else get_index(varied_thing_name, thing, -1, -1)
-        else:
-            norm_idx = 0.0
-        sigma = thing if varied_thing_name == 'sigma' else default_sigma
-        alpha1 = thing if varied_thing_name == 'alpha1' else default_alpha1
-        metallicity = thing if varied_thing_name == 'metallicity' else default_metallicity
+    #if the user desires to create a stacked histogram where the mask_list is used to create the different components, aggregate data for each mask
+    if mask_list is not None:
+        for mask in mask_list:
+            mask_1, mask_2 = mask 
+            masked_sn_1_times = filtered_data[(mask_1(filtered_data)) & (filtered_data.sn_1_type.isin(sn_types_to_include))].sn_1_time
+            masked_sn_2_times = filtered_data[(mask_2(filtered_data)) & (filtered_data.sn_2_type.isin(sn_types_to_include))].sn_2_time
+            masked_sn_times = pd.concat([masked_sn_1_times, masked_sn_2_times])
+            weights = np.ones(len(masked_sn_times)) * 1e6 / np.max(filtered_data['sample_mass'])
+            data_list.append(masked_sn_times)
+            weight_list.append(weights)
+    else:
+        sn_1_times = filtered_data[filtered_data.sn_1_type.isin(sn_types_to_include)].sn_1_time
+        sn_2_times = filtered_data[filtered_data.sn_2_type.isin(sn_types_to_include)].sn_2_time
+        sn_times = pd.concat([sn_1_times, sn_2_times])
+        data_list.append(sn_times)
+        weights = np.ones(len(sn_times)) * 1e6 / np.max(filtered_data['sample_mass'])
+        weight_list.append(weights)
 
-        #grab the desired population
-        filtered = data[(data['met_cosmic'] == metallicity) & (data['sigma'] == sigma) & (data['alpha1'] == alpha1)]
-        
-        weight = 1e6 / np.max(data['singles_mass']) if singles_only else 1e6 / np.max(data['sample_mass'])
-        for sn in sn_types:
-            color = sn_cmaps[sn](norm_idx) if varied_thing_name != 'Klencki' else 'black'
-            if sn == 'All': #all means type I and II by default.
-                correct_sn1 = filtered[filtered['sn_1_type'].isin(what_is_all)]
-                correct_sn2 = filtered[filtered['sn_2_type'].isin(what_is_all)]
-            else:
-                correct_sn1 = filtered[filtered['sn_1_type'] == sn]
-                correct_sn2 = filtered[filtered['sn_2_type'] == sn]
-
-            #this variation is applied within the population
-            if varied_thing_name == 'remnant_type':
-                #if it was a remnant mass cap and none, we include everything so we do nothing here -- otherwise filter
-                if thing == 'NS':
-                    correct_sn1 = correct_sn1[correct_sn1['sn_1_remnant_mass'] < 3.0]
-                    correct_sn2 = correct_sn2[correct_sn2['sn_2_remnant_mass'] < 3.0]
-                else:
-                    correct_sn1 = correct_sn1[correct_sn1['sn_1_remnant_mass'].between(3.0, 15.0)]
-                    correct_sn2 = correct_sn2[correct_sn2['sn_2_remnant_mass'].between(3.0, 15.0)]
-            else:
-                correct_sn1 = correct_sn1[correct_sn1['sn_1_remnant_mass'] < remcap]
-                correct_sn2 = correct_sn2[correct_sn2['sn_2_remnant_mass'] < remcap]
-
-            sn_times = pd.concat([correct_sn1['sn_1_time'], correct_sn2['sn_2_time']])
-    
-            weights = np.ones(len(sn_times)) * weight
-
-            if len(sn_times) == 0:
-                print(f"Skipping met={metallicity}, sigma={sigma}, alpha1={alpha1} for {sn}")
-            else:
-
-                if varied_thing_name == 'metallicity':
-                    curve_label = f'{thing/0.02:.2f}'
-                elif varied_thing_name == 'alpha1':
-                    curve_label = f'{thing:.2f}'
-                elif varied_thing_name == 'sigma':
-                    curve_label = f'{thing:.0f}'
-                else:
-                    curve_label = f'{thing}'
-
-                plot_data.append(sn_times)
-                plot_weights.append(weights)
-                plot_colors.append(color)
-                plot_labels.append(curve_label)
-
-    #plot the histograms all at once so that barstacked can work
-    ax.hist(plot_data, bins=bins, color=plot_colors, histtype=histtype, linestyle=linestyle, weights=plot_weights,
-            label=plot_labels, linewidth=linewidth, alpha=alpha)
-
-def plot_total_dtd(data, ax, singles=False, sigma=default_sigma, alpha1=default_alpha1, z=default_metallicity, bin_range = (2, 1600), remnant_cap=15):
-    data = data[(data['sigma'] == sigma) & (data['alpha1'] == alpha1) & (data['met_cosmic'] == z)]
-    if singles: data = data[data['is_single']]
-
-    sn_1_times = data[(data.sn_1_type.isin(['I', 'II'])) & (data.sn_1_remnant_mass.between(0.0, remnant_cap))]['sn_1_time']
-    sn_2_times = data[(data.sn_2_type.isin(['I', 'II'])) & (data.sn_2_remnant_mass.between(0.0, remnant_cap))]['sn_2_time']
-    sn_times = pd.concat([sn_1_times, sn_2_times])
-    weight = 1e6 / np.max(data['singles_mass']) if singles else 1e6 / np.max(data['sample_mass'])
-    weights = np.ones(len(sn_times)) * weight
-    bins = np.logspace(np.log10(bin_range[0]), np.log10(bin_range[1]), 30)
-
-    line = ax.hist(sn_times, bins=bins, color='black', histtype='step', linestyle='-', 
-                   weights=weights, linewidth=2)
-    
-    return line
+    # plot the entire data_list
+    bins = np.logspace(np.log10(bin_range[0]), np.log10(bin_range[1]), n_bins)
+    if histtype == 'step':
+        lines = ax.hist(data_list, bins=bins, color=color_list, histtype=histtype, linestyle=linestyle, weights=weight_list,
+                        label=labels, linewidth=linewidth, alpha=alpha)
+    elif histtype == 'barstacked':
+        lines = ax.hist(data_list, bins=bins, color=color_list, histtype=histtype, label=labels, weights=weight_list, alpha=alpha)
+    else:
+        raise ValueError(f"Invalid histtype {histtype} provided. Must be 'step' or 'barstacked'.")
+    return lines
 
 def add_descriptor(ax, sn_types, x=0.98, y=0.96):
-    top_right = {'All' : 'All CCSNe', 'I' : 'Type I', 'II' : 'Type II'}
-    top_right_text = top_right[sn_types[0]]
-    
-    ax.text(x, y, top_right_text, transform=ax.transAxes,
-            ha='right', va='top', fontsize=LEGEND_FONT_SIZE, fontweight='semibold')
+    if len(sn_types) == 2:
+        label = 'All CCSNe'
+    elif sn_types[0] == 'I':
+        label = 'Type I'
+    elif sn_types[0] == 'II':
+        label = 'Type II'
+    ax.text(x, y, label, transform=ax.transAxes,
+            ha='right', va='top', fontsize=LEGEND_FONT_SIZE + 5)
 
 def add_metallicity_label(ax, z_dim, x=0.02, y=0.95):
-    Z_str = r'$Z \approx$' + str(z_dim) + r'$\,Z_\odot$' if z_dim != 1.0 else r'$Z \approx Z_\odot$'
+    Z_str = r'$Z = $' + str(z_dim) + r'$\,Z_\odot$' if z_dim != 1.0 else r'$Z = Z_\odot$'
     ax.text(x, y, Z_str, transform=ax.transAxes, ha='left', va='top', fontsize=LEGEND_FONT_SIZE)
 
-xticks = [2, 5, 10, 20, 50, 100, 200, 500, 1500]
+xticks = [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000]
 
-def plot_remnant_types(data):
-    fig, axs = plt.subplots(2, 3, figsize=(FIG_WIDTH, FIG_HEIGHT), sharex=False, sharey='row')
+def plot_remnant_types(data,
+                       bin_range = (1, 500),
+                       n_bins = 30,
+                       axis_range = (1, 500),
+                       color_list = ["#f26359", "#f7c067"],
+                       savepath = 'delay_times_remnant_types.png'):
+    
+    # 3x3 grid, rows of binfrac = 0.0, 0.6, offner23, and cols of All, I, II
+    fig, axs = plt.subplots(3, 3, figsize=(FIG_WIDTH, FIG_HEIGHT * 1.5), sharex=False, sharey='row')
 
-    remnant_types = ['NS', 'BH']
+    mask_list = [(lambda df: df.sn_1_ns, lambda df: df.sn_2_ns),
+                 (lambda df: ~df.sn_1_ns, lambda df: ~df.sn_2_ns)]
 
-    #consider only type I and II panel, superimpose the entire DTD, or maybe all the type I/II?
+    for ax, sn_types, binfrac in zip(axs.flatten(),
+                                          [['I', 'II'], ['I'], ['II']] * 3,
+                                          ['0.0'] * 3 + ['0.6'] * 3 + ['offner23'] * 3):
 
-    for ax, sn_types, singles_only in zip(axs.flatten(),
-                                          [['All'], ['I'], ['II']] * 2,
-                                          [True, True, True, False, False, False]):
+        #plot first the divided histogram of the remnant types
+        lines = plot_single_delay_histogram(data,
+                                            ax,
+                                            binfrac=binfrac,
+                                            kicks=(5, None),
+                                            alpha=1.0,
+                                            qcflag=5,
+                                            remnantflag=6,
+                                            fryer_limit=('sn_1_remnant_mass', 'sn_2_remnant_mass', 3),
+                                            met_cosmic=0.02,
+                                            sn_types_to_include = sn_types,
+                                            linestyle = None,
+                                            linewidth=None,
+                                            mask_list = mask_list,
+                                            labels = ['NS', 'Fallback BH'],
+                                            color_list = color_list,
+                                            histtype='barstacked',
+                                            bin_range=bin_range,
+                                            n_bins=n_bins)
 
-        bin_range = (2, 1600)
+        #if sn_types == ['I', 'II'] and binfrac == '0.0':
+            #legend = ax.legend(handles=lines, title='Remnant Type', fontsize=LEGEND_FONT_SIZE, title_fontsize=LEGEND_FONT_SIZE, bbox_to_anchor=(1.0, 0.88), loc='upper right')
+            #ax.add_artist(legend)
         
+        #plot last a black line outlining the sum of all the ccsne
+        plot_single_delay_histogram(data,
+                                ax,
+                                binfrac=binfrac,
+                                kicks=(5, None),
+                                alpha=1.0,
+                                qcflag=5,
+                                remnantflag=6,
+                                fryer_limit=('sn_1_remnant_mass', 'sn_2_remnant_mass', 3),
+                                met_cosmic=0.02,
+                                sn_types_to_include = ['I', 'II'],
+                                linestyle = '-',
+                                linewidth=2,
+                                mask_list = None,
+                                labels = ['Total DTD'],
+                                color_list = ['black'],
+                                histtype='step',
+                                bin_range=bin_range,
+                                n_bins=n_bins)
         
-        plot_single_delay_histogram(data, remnant_types, 'remnant_type', sn_types,
-                                    ax, linestyle='-', singles_only=singles_only,
-                                    sn_cmaps=supernova_colormaps, bin_range=bin_range, histtype='barstacked')
-
+        #if sn_types == ['I', 'II'] and binfrac == '0.0':
+        #    legend = ax.legend(handles=lines, fontsize=LEGEND_FONT_SIZE, title_fontsize=LEGEND_FONT_SIZE, bbox_to_anchor=(1.0, 0.6), loc='upper right')
+        
         add_descriptor(ax, sn_types, y=0.96)
-
-        legend1 = ax.legend(title='Remnant formed', fontsize=LEGEND_FONT_SIZE, title_fontsize=LEGEND_FONT_SIZE, bbox_to_anchor=(1.0, 0.88), loc='upper right')
-        ax.add_artist(legend1)
-
-        #plot the total DTD for this population
-        plot_total_dtd(data, ax, singles=singles_only, bin_range=bin_range)
-
-        #add a legend for this to the left hand panels
-        if sn_types[0] == 'All':
-            curve_label = 'singles only' if singles_only else ''
-            hist_patch = Patch(facecolor='white', edgecolor='black', lw=2)
-            ax.legend(handles=[hist_patch], labels=[curve_label], title='Total DTD', bbox_to_anchor=(1.0, 0.6), loc='upper right', fontsize=LEGEND_FONT_SIZE, title_fontsize=LEGEND_FONT_SIZE)
-
-        
         ax.set_xscale('log')
-
-        if not singles_only:
+        if binfrac == 'offner23':
             ax.set_xlabel('Time after starburst (Myr)', fontsize=LABEL_FONT_SIZE)
-
         ax.set_xticks(xticks)
         ax.set_xticklabels([str(t) for t in xticks])    
-            
         ax.tick_params(axis='both', labelsize=24)
-        ax.set_xlim(0.5, bin_range[1] + 1000)
+        ax.set_xlim(axis_range[0], axis_range[1])
         
-        if sn_types[0] == 'All':
+        if sn_types == ['I', 'II']:
             ax.set_ylabel(r'$N_{\rm CCSNe}$ $(10^6 \, M_\odot)^{-1}$', fontsize=LABEL_FONT_SIZE)
-            if singles_only:
-                ax.text(0.02, 0.96, 'Singles', transform=ax.transAxes, ha='left', va='top', fontsize=LEGEND_FONT_SIZE+10, fontweight='semibold')
-            else:
-                ax.text(0.02, 0.96, 'Singles +\nbinaries', transform=ax.transAxes, ha='left', va='top', fontsize=LEGEND_FONT_SIZE+10, fontweight='semibold')
+            binfrac_labels = {'0.0': '0%', '0.6': '60%', 'offner23': 'Offner+23'}
+            ax.text(0.02, 0.96, r'$f_{\rm bin} = $' + binfrac_labels[binfrac], transform=ax.transAxes, ha='left', va='top', fontsize=LEGEND_FONT_SIZE+10)
 
-    for ax in axs.flatten():
-        add_metallicity_label(ax, 1.0, x=0.02, y=0.85)
-        break
+            if binfrac == '0.0':
+                add_metallicity_label(ax, 1.0, x=0.02, y=0.85)
 
     fig.tight_layout()
-    fig.savefig('final_figs/delay_times_remnant_types.png', dpi=DPI, bbox_inches='tight')
+    fig.savefig(savepath, dpi=DPI, bbox_inches='tight')
     plt.show()
 
 

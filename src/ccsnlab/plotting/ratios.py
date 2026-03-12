@@ -1,6 +1,7 @@
 import warnings
 warnings.simplefilter(action='ignore', category=FutureWarning)
 
+from importlib import resources
 from matplotlib import pyplot as plt
 from matplotlib import rcParams
 rcParams.update({'xtick.major.pad': '5.0'})
@@ -90,7 +91,8 @@ def get_data(x, y, ylo, yhi, xlo, xhi, solar=9.05):
     return data
 
 def get_loss_data(solar=9.0, raw_file="raw_loss_data.csv"):
-    df = pd.read_csv(raw_file)
+    with resources.files("ccsnlab.plotting").joinpath(raw_file) as path:
+        df = pd.read_csv(path)
 
     oh12 = df["oh12"].to_numpy(float)
     doh_p = df["oh12_err_p"].to_numpy(float)
@@ -255,9 +257,58 @@ def plot_loss_data(ax, label_loss=True, solar=9.05):
 
     return lines
 
+
+def apply_explosion_criteria(data,
+                             explosion_criteria = 'maltsev'):
+    """
+    Apply explosion criteria to the data by masking out the rows where the
+    criteria is not met and setting the SN type and subtype to None for those rows.
+    
+    :param data: DataFrame containing the sn_info which is formatted with all the appropriate
+    columns created by ccsnlab.data_loading.process_raw.
+    :param explosion_criteria: A string or tuple indicating the explosion criteria to apply.
+    This is now either 'maltsev' or a tuple of 3 elements, where the first two elements are strings
+    that indicate the column to apply the criteria to (e.g. 'sn_1_remnant_mass', 'sn_2_remnant_mass')
+    and the third element is the mass threshold to apply.
+    """
+
+    data = data.copy()
+    if explosion_criteria == 'maltsev':
+        explosion_mask_sn1 = data['sn_1_maltsev_region'] != 'Direct BH'
+        explosion_mask_sn2 = data['sn_2_maltsev_region'] != 'Direct BH'
+        data.loc[~explosion_mask_sn1, 'sn_1_type'] = None
+        data.loc[~explosion_mask_sn1, 'sn_1_subtype'] = None
+        data.loc[~explosion_mask_sn2, 'sn_2_type'] = None
+        data.loc[~explosion_mask_sn2, 'sn_2_subtype'] = None
+    elif isinstance(explosion_criteria, tuple) and len(explosion_criteria) == 3:
+        col_sn1, col_sn2, mass_threshold = explosion_criteria
+        explosion_mask_sn1 = data[col_sn1] <= mass_threshold
+        explosion_mask_sn2 = data[col_sn2] <= mass_threshold
+        data.loc[~explosion_mask_sn1, 'sn_1_type'] = None
+        data.loc[~explosion_mask_sn1, 'sn_1_subtype'] = None
+        data.loc[~explosion_mask_sn2, 'sn_2_type'] = None
+        data.loc[~explosion_mask_sn2, 'sn_2_subtype'] = None
+    else:
+        raise ValueError(f"Unsupported explosion criteria: {explosion_criteria}")
+    return data
+
+def format_ax(ax, text_y=None):
+    ax.axvspan(1.5, 3, facecolor='lightgrey', alpha=0.75)
+    ax.set_xscale('log')
+    ax.set_xlim(5e-3, 3)
+    ax.tick_params(axis='both', labelsize=24)
+    ax.set_xlabel(r'$Z \,/\, Z_\odot$', fontsize=32)
+    ax.set_ylabel(r'$N_{\text{I}} \,/\, N_{\text{II}}$', fontsize=32)
+    x_ticks = [0.01, 0.1, 1.0]
+    ax.set_xticks(x_ticks, labels=[str(xt) for xt in x_ticks], fontsize=24)
+    if text_y is not None:
+        ax.text(0.896, text_y, "No\nCOSMIC\nModels", transform=ax.transAxes,
+                color='crimson', fontsize=18, ha='left', va='top')
+
 def plot_I_over_II_one_curve(data,
-                             metallicities,
                              ax,
+                             explosion_criteria = 'maltsev',
+                             filter_list = [],
                              curve_label='',
                              zsun=0.02,
                              color='thistle',
@@ -277,119 +328,96 @@ def plot_I_over_II_one_curve(data,
     :param linestyle: Line style of the curve.
     :param linewidth: Line width of the curve.
     """
+
+    for (filter_col, filter_val) in filter_list:
+        data = data[data[filter_col] == filter_val]
     
     ratios = []
-    for Z in metallicities:
+    for Z in data.met_cosmic.unique():
         sub = data[data['met_cosmic'] == Z]
+        sub = apply_explosion_criteria(sub, explosion_criteria=explosion_criteria)
         sn1_types = sub.sn_1_type
         sn2_types = sub.sn_2_type
         n_I = len(sn1_types[sn1_types == 'I']) + len(sn2_types[sn2_types == 'I'])
         n_II = len(sn1_types[sn1_types == 'II']) + len(sn2_types[sn2_types == 'II'])
         ratios.append(n_I / n_II if n_II else np.nan)
 
-    dimensionless_z = [z / zsun for z in metallicities]
+    dimensionless_z = [z / zsun for z in data.met_cosmic.unique()]
     line = ax.plot(dimensionless_z, ratios, label=curve_label,
                    color=color, linestyle=linestyle, linewidth=linewidth)
     return line[0]
 
-def plot_variations(zsun,
-                    ax,
-                    sn_info,
-                    variation='',
-                    variation_values=[],
-                    variation_labels=[],
-                    variation_colors=[],
-                    linewidths=[],
-                    binfrac='',
-                    kicks='disberg',
-                    alpha=1.0,
-                    qcflag=5,
-                    change_IIbs=False,
-                    explosion_criteria='maltsev'):
+def plot_binfrac_and_remnant(ax,
+                             maltsev_data,
+                             fryer_data,
+                             zsun = 0.02,
+                             solar = 9.05,
+                             binfracs = ['0.0', '0.6', 'offner23'],
+                             binfrac_colors = ['#d16ba5', '#c297ec', '#90c6ff', '#41f2ff'],
+                             explosion_criteria = ['maltsev', ('sn_1_remnant_mass', 'sn_2_remnant_mass', 3)]):
     
-    """
-    Docstring for plot_variations
-    
-    :param zsun: Solar metallicity value to normalize the plot's COSMIC metallicity values.
-    :param ax: Matplotlib axis object to plot on.
+    cmap = LinearSegmentedColormap.from_list("my_colormap", binfrac_colors)
+    binfrac_colors = cmap(np.linspace(0, 1, len(binfracs)))
 
-    :param sn_info: DataFrame containing the sn_info which is formatted with all the appropriate columns created by ccsnlab.data_loading.process_raw.
-    :param variation: String indicating the type of variation to plot (these are 'binfrac', 'sigma').
-    :param variation_values: List of values for the specified variation.
-    :param variation_labels: List of labels corresponding to the variation values.
-    :param variation_colors: List of colors corresponding to the variation values.
+    # Plot each binary fraction with both explosion criteria
+    filter_list = [('kickflag', 5), ('alpha', 1.0), ('qcflag', 5)]
+    for binfrac, binfrac_color in zip(binfracs, binfrac_colors):
+        for expl in explosion_criteria:
+            if expl == 'maltsev':
+                filter_list_expl = filter_list + [('remnantflag', 6),
+                                                  ('rembar_massloss', 0.0),
+                                                  ('maltsev_mode', 0),
+                                                  ('maltsev_fallback', 0.5),
+                                                  ('maltsev_pf_prob', 0.1)]
+                data = maltsev_data
+            elif isinstance(expl, tuple) and len(expl) == 3:
+                filter_list_expl = filter_list + [('remnantflag', 4),
+                                                  ('rembar_massloss', 0.5),
+                                                  ('fryer_mass_limit', 0)]
+                data = fryer_data
+            else:
+                raise ValueError(f"Unsupported explosion criteria: {expl}")
+            
+            filter_list_expl = filter_list_expl + [('binfrac', binfrac)]
 
-    :param binfrac: The binary fraction for which all variations are plotted.
-    :param kicks: A tuple of (kickflag, sigma) for the variations.
-    :param alpha: The alpha common envelope efficiency parameter for the variations.
-    :param qcflag: The qcflag value for the variations.
+            if expl == 'maltsev':
+                if binfrac == '0.0':
+                    curve_label = r'$f_{\rm bin} = 0\%$'
+                elif binfrac == '0.6':
+                    curve_label = r'$f_{\rm bin} = 60\%$'
+                elif binfrac == 'offner23':
+                    curve_label = r'Offner+23 $f_{\rm bin}(M_1)$'
+                else:
+                    curve_label = f'{binfrac}'
 
-    :param change_IIbs: Whether to change the SN types to include IIb in Type I for the variations.
-    :param explosion_criteria: A string indictaing the explosion crieria. Now we support 'maltsev' or a string of an int e.g. '15' which suggests all
-    explosions with co masses less than 15 msun explode.
-    """
+            plot_I_over_II_one_curve(data,
+                                     ax=ax,
+                                     explosion_criteria=expl,
+                                     filter_list=filter_list_expl,
+                                     curve_label=curve_label if expl == 'maltsev' else None,
+                                     zsun=zsun,
+                                     color=binfrac_color,
+                                     linestyle='-' if expl == 'maltsev' else '--',
+                                     linewidth=2)
 
-    # If the variations are not set to None, then we exclusively select the part of the DataFrame that matches
-    kickflag, sigma = kicks
-    binfrac_mask = pd.Series(True, index=sn_info.index) if not binfrac else sn_info['binfrac'] == binfrac
-    kickflag_mask = pd.Series(True, index=sn_info.index) if not kickflag else sn_info['kickflag'] == kickflag
-    sigma_mask = pd.Series(True, index=sn_info.index) if not sigma else sn_info['sigma'] == sigma
-    alpha_mask = pd.Series(True, index=sn_info.index) if not alpha else sn_info['alpha1'] == alpha
-    qcflag_mask = pd.Series(True, index=sn_info.index) if not qcflag else sn_info['qcflag'] == qcflag
-    keep_mask = binfrac_mask & kickflag_mask & sigma_mask & alpha_mask & qcflag_mask
-    data = sn_info[keep_mask].copy()
-    
-    # If we are changing the IIbs, we simply overwrite the SN types in the DataFrame
-    if change_IIbs:
-        IIb_sn1_mask = data['sn_1_subtype'] == 'IIb'
-        IIb_sn2_mask = data['sn_2_subtype'] == 'IIb'
-        data.loc[IIb_sn1_mask, 'sn_1_type'] = 'I'
-        data.loc[IIb_sn2_mask, 'sn_2_type'] = 'I'
+    #add a legend for the COSMIC data
+    ax.plot([], [], color='black', linestyle='--', label='Fryer+12 (NS only)')
+    legend = ax.legend(loc='upper left', fontsize=LEGEND_FONT_SIZE, title_fontsize=LEGEND_FONT_SIZE)
+    ax.add_artist(legend)
 
-    # To apply the explosion criteria, we simply overwrite the SN types to None for all unsuccesful explosions
-    if explosion_criteria == 'maltsev':
-        pass #implement later
-    elif explosion_criteria.isdigit():
-        co_mass_threshold = float(explosion_criteria)
-        explosion_mask_sn1 = data['sn_1_remnant_mass'] <= co_mass_threshold
-        explosion_mask_sn2 = data['sn_2_remnant_mass'] <= co_mass_threshold
-        data.loc[~explosion_mask_sn1, 'sn_1_type'] = None
-        data.loc[~explosion_mask_sn2, 'sn_2_type'] = None
-    else:
-        raise ValueError(f"Unsupported explosion criteria: {explosion_criteria}")
-    
-    # now all we have left to do is plot each of the variations in a loop, and return a list of the lines we plotted
-    lines = []
-    for var_value, var_label, var_color, linewidth in zip(variation_values, variation_labels, variation_colors, linewidths):
-        # kicks are supplied as a tuple of (kickflag, sigma)
-        if variation == 'kicks':
-            kickflag, sigma = var_value
-            kickflag_mask = data['kickflag'] == kickflag
-            sigma_mask = data['sigma'] == sigma if sigma else pd.Series(True, index=data.index)
-            keep_mask = kickflag_mask & sigma_mask
-            var_value_data = data[keep_mask]
-        # other variations are just a variation of a single column
-        else:
-            var_value_data = data[data[variation] == var_value]
-        
-        line = plot_I_over_II_one_curve(var_value_data,
-                                        var_value_data.met_cosmic.unique(),
-                                        ax,
-                                        curve_label=var_label,
-                                        zsun=zsun,
-                                        color=var_color,
-                                        linestyle='-',
-                                        linewidth=linewidth)
-        lines.append(line)
-
-    return lines
+    #plot the LOSS data
+    loss_data = plot_loss_data(ax, label_loss=True, solar=solar)
+    ax.legend(handles=loss_data, loc='upper left', bbox_to_anchor=(0.0, 0.7),
+              labels=[r'KK12, $Z$, (Ibc+IIb)/II', 'G17 Ibc/(II+IIb)'],
+              fontsize=LEGEND_FONT_SIZE, title_fontsize=LEGEND_FONT_SIZE)
 
 def plot_binfracs(ax,
                   data,
                   zsun = 0.02, 
                   solar = 9.05,
                   binfracs = ['0.0', '0.6', 'offner23'],
-                  labels = ['0% (singles only)', '60%', 'Offner+23']):
+                  binfrac_colors = ['#d16ba5', '#c297ec', '#90c6ff', '#41f2ff'],
+                  LOSS_legend=False):
     
     """
     Function which wraps plot_variations which plots the effect of changing the binary fraction.
@@ -397,176 +425,411 @@ def plot_binfracs(ax,
     :param ax: Matplotlib axis object to plot on.
     :param data: DataFrame containing the sn_info which is formatted with all the appropriate columns created by ccsnlab.data_loading.process_raw.
     :param zsun: Solar metallicity value to normalize the plot's COSMIC metallicity values.
-    :param solar: Solar metallicity value for the plot.
+    :param solar: Solar metallicity value in 12+log(O/H) for the plot.
     :param binfracs: List of binary fractions to plot.
     :param labels: List of labels for the binary fractions.
+    :param LOSS_legend: Boolean indicating whether to display the LOSS legend.
+
     """
+
+    labels = []
+    for binfrac in binfracs:
+        if binfrac.isdigit() and float(binfrac) == 0.0:
+            labels.append('0% (Singles Only)')
+        elif binfrac.isdigit():
+            labels.append(f'{int(float(binfrac)*100)}%')
+        elif binfrac == 'offner23':
+            labels.append('Offner+23')
+        else:
+            labels.append(f'{binfrac}')
     
     #One plot is the fiducial model with mass caps
-    binfrac_colors = ['#d16ba5', '#c297ec', '#90c6ff', '#41f2ff']
     cmap = LinearSegmentedColormap.from_list("my_colormap", binfrac_colors)
-    binfrac_colors = [cmap(i / len(binfracs)) for i in range(len(binfracs))]
+    binfrac_colors = cmap(np.linspace(0, 1, len(binfracs)))
     
-    lines = plot_variations(zsun,
-                            ax,
-                            data,
-                            legend=False,
-                            variation='binfrac',
-                            variation_values=binfracs,
-                            variation_labels=labels,
-                            variation_colors=binfrac_colors,
-                            kicks='disberg',
-                            alpha=1.0,
-                            qcflag=5,
-                            change_IIbs=False,
-                            explosion_criteria='maltsev')
-    
+    # iteratively call plot_I_over_II_curve
+    lines = []
+    for binfrac, label, binfrac_color in zip(binfracs, labels, binfrac_colors):
+        line = plot_I_over_II_one_curve(data,
+                                        ax,
+                                        explosion_criteria='maltsev',
+                                        filter_list=[('binfrac', binfrac)],
+                                        curve_label=label,
+                                        zsun = zsun,
+                                        color=binfrac_color,
+                                        linestyle='-',
+                                        linewidth=2)
+        lines.append(line)
+
     #add a legend for the COSMIC data
-    legend = ax.legend(handles=lines, loc='upper left', title='Binary Fraction', fontsize=LEGEND_FONT_SIZE, title_fontsize=LEGEND_FONT_SIZE)
+    legend = ax.legend(handles=lines,
+                       loc='upper left',
+                       title='Binary Fraction',
+                       fontsize=LEGEND_FONT_SIZE,
+                       title_fontsize=LEGEND_FONT_SIZE)
     ax.add_artist(legend)
     
     #add a legend for the loss data
     data = plot_loss_data(ax, label_loss=True, solar=solar)
-    ax.legend(handles=data, loc='upper center', bbox_to_anchor=(0.57, 0.86),
-              labels=[r'KK12, $Z$, (Ibc+IIb)/II', 'G17 Ibc/(II+IIb)'], title='SN Survey Data',
-              fontsize=LEGEND_FONT_SIZE, title_fontsize=LEGEND_FONT_SIZE)
+    if LOSS_legend:
+        ax.legend(handles=data,
+                 loc='upper left',
+                 bbox_to_anchor=(0.0, 0.7),
+                 labels=[r'KK12, $Z$, (Ibc+IIb)/II', 'G17 Ibc/(II+IIb)'],
+                 title='SN Survey Data',
+                 fontsize=LEGEND_FONT_SIZE,
+                 title_fontsize=LEGEND_FONT_SIZE)
 
-
-def plot_mass_caps(ax, fiducial_data, zsun=0.02, solar=9.05):
+def plot_remnants(ax,
+                  maltsev_data,
+                  fryer_data,
+                  zsun = 0.02, 
+                  solar = 9.05,
+                  binfrac = 'offner23',
+                  LOSS_legend=False,
+                  incl_fryer_substring = False,
+                  remnant_colors = ["#643995", "#41ffdf"],
+                  rem_vars = [(6, 0.0, 0, 0.5, 0.0, None), # (remnantflag, rembar_massloss, maltsev_mode, maltsev_fallback, maltsev_pf_prob, fryer_mass_limit)
+                              (6, 0.0, 0, 0.5, 0.1, None),
+                              (6, 0.0, 0, 0.5, 1.0, None),
+                              (4, 0.5, None, None, None, 0),
+                              (4, 0.5, None, None, None, 1)],
+                  fryer_vars = [('sn_1_remnant_mass', 'sn_2_remnant_mass', 3), # columns to cut on and upper mass threshold for the fryer models
+                                ('sn_1_massc_co_layer_1', 'sn_2_massc_co_layer_2', 15)]):
     """
     Function which wraps plot_variations which plots the effect of changing the remnant mass cap.
     
     :param ax: Matplotlib axis object to plot on.
-    :param fiducial_data: DataFrame containing the sn_info which is formatted with all the appropriate columns created by ccsnlab.data_loading.process_raw.
+    :param maltsev_data: DataFrame containing the sn_info with maltsev variations which is formatted with all the appropriate columns created by ccsnlab.data_loading.process_raw.
+    :param fryer_data: DataFrame containing the sn_info with fryer variations which is formatted with all the appropriate columns created by ccsnlab.data_loading.process_raw.
     :param zsun: Solar metallicity value to normalize the plot's COSMIC metallicity values.
-    :param solar: Solar metallicity value for the plot.
-    """
-    #One plot is the fiducial model with mass caps
-    mass_caps = [3.0, 4.0, 5.0, 15.0, 100.0]
-    mass_cap_colors = ['#d16ba5', '#c297ec', '#90c6ff', '#41f2ff']
-    cmap = LinearSegmentedColormap.from_list("my_colormap", mass_cap_colors)
-    mass_cap_colors = [cmap(i / len(mass_caps)) for i in range(len(mass_caps))]
-    
-    #add a black dashed line to show singles in the legend
-    singles_line = ax.plot([], [], color='black', linestyle='--', linewidth=2, label='Single stars')
+    :param solar: Solar metallicity value in 12+log(O/H) for the plot.
+    :param binfrac: The binary fraction for which all variations are plotted.
+    :param LOSS_legend: Boolean indicating whether to display the LOSS legend.
 
+    :param rem_vars: List of tuples of (remnantflag, rembar_massloss, maltsev_mode, maltsev_fallback, maltsev_pf_prob, fryer_mass_limit) to plot
+    for the remnant variations. Currently, only models with malsev_mode=0 and maltsev_fallback=0.5 are formatted nicely.
+
+    :param fryer_vars: List of tuples of (col_sn1, col_sn2, mass_threshold) to plot for the fryer variations,
+    where col_sn1 and col_sn2 are the columns to apply the criteria to for SN 1 and SN 2 respectively, and
+    mass_threshold is the upper mass threshold to apply for the explosion criteria.
+    """
+
+    #total number of variations is number with remnantflag 6 + number with remnantflag 4 * number of fryer variations
+    n_variations = len([var for var in rem_vars if var[0] == 6]) + len([var for var in rem_vars if var[0] == 4]) * len(fryer_vars)
+    cmap = LinearSegmentedColormap.from_list("my_colormap", remnant_colors)
+    remnant_colors = cmap(np.linspace(0, 1, n_variations))
+
+    #create all the labels and remnant variations
+    labels = []
+    all_variations = []
+    all_explosions = []
+    for var in rem_vars:
+
+        #build up the variation(s) and explosion(s) entry(s)
+        if var[0] == 6:
+            all_variations.append(var)
+            all_explosions.append('maltsev')
+        else:
+            for expl in fryer_vars:
+                all_variations.append(var)
+                all_explosions.append(expl)
+
+        # now build up the label(s) for this variation
+        remnantflag, rembar_massloss, maltsev_mode, maltsev_fallback, maltsev_pf_prob, fryer_mass_limit = var
+        if remnantflag == 6 and rembar_massloss == 0.0 and maltsev_mode == 0 and maltsev_fallback == 0.5:
+            prob_str = f"{int(maltsev_pf_prob*100)}%"
+            label = 'Maltsev+25 ' + r'($p_{\rm BH}$' + f' = {prob_str})'
+            labels.append(label)
+        elif remnantflag == 6:
+            label = f'Maltsev+25 maltsev_pf_prob={maltsev_pf_prob}, rembar_massloss={rembar_massloss}, maltsev_mode={maltsev_mode}, maltsev_fallback={maltsev_fallback}'
+            labels.append(label)
+        elif remnantflag == 4:
+            for col_sn1, _, mass_threshold in fryer_vars:
+                if col_sn1 == 'sn_1_remnant_mass':
+                    if mass_threshold == 3:
+                        label = f'Fryer+12 (NS Only'
+                    else:
+                        label = f'Fryer+12 ' + r'($M_{\rm rem}<$' + f'{mass_threshold}' + r'$\,M_\odot$'
+                elif col_sn1 == 'sn_1_massc_co_layer_1':
+                    label = f'Fryer+12 ' + r'($M_{\rm CO}<$' + f'{mass_threshold}' + r'$\,M_\odot$'
+                else:
+                    label = f'Fryer+12 ({col_sn1} < {mass_threshold}'
+
+                if incl_fryer_substring:
+                    sub_str = r'$M_{\rm CC,tot}$ Limited' if fryer_mass_limit == 0 else r'$M_{\rm CC,core}$ Limited'
+                    label += f", {sub_str})"
+                else:
+                    label += ')'
+                
+                labels.append(label)
+
+    # loop through all the variations and call plot_I_over_II_curve
     lines = []
-    for mass_cap, mass_cap_color in zip(mass_caps, mass_cap_colors):
-        var_label =  r'$M_{\rm rem}$' + f' < {mass_cap}' +  r'$\, M_{\odot}$'
-        if mass_cap == 3.0:
-            var_label += ' (NSs)'
-        elif mass_cap == 100.0:
-            var_label = 'All remnants'
-        curr = plotting(zsun, ax, fiducial_data, legend=False,
-                        plot_singles=True,  singles_color=mass_cap_color, singles_label=None,
-                        plot_orig=True,     orig_color=mass_cap_color,    orig_label=var_label,
-                        bh_cap=mass_cap, sigma=265.0, alpha1=1.0, change_IIbs=False, legend_cols=None, legend_name=None)
-        lines.append(curr[-1])
-    
-    lines.append(singles_line[0])
-    
+    for variation, expl, color, label in zip(all_variations, all_explosions, remnant_colors, labels):
+        if variation[0] == 6:
+            filter_list = [('remnantflag', variation[0]),
+                           ('rembar_massloss', variation[1]),
+                           ('maltsev_mode', variation[2]),
+                           ('maltsev_fallback', variation[3]),
+                           ('maltsev_pf_prob', variation[4]),
+                           ('binfrac', binfrac)]
+        else:
+            filter_list = [('remnantflag', variation[0]),
+                           ('rembar_massloss', variation[1]),
+                           ('binfrac', binfrac)]
+        
+        line = plot_I_over_II_one_curve(maltsev_data,
+                                        ax,
+                                        explosion_criteria=expl,
+                                        filter_list=filter_list,
+                                        curve_label=label,
+                                        zsun=zsun,
+                                        color=color,
+                                        linestyle='-',
+                                        linewidth=2)
+    lines.append(line)
+
     #add a legend for the COSMIC data
-    legend2 = ax.legend(handles=lines, loc='upper left', title='Remnant mass limit', fontsize=LEGEND_FONT_SIZE, title_fontsize=LEGEND_FONT_SIZE)
-    ax.add_artist(legend2)
+    legend = ax.legend(handles=lines, 
+                       loc='upper left',
+                       title='Remnant Mass & Explosion',
+                       fontsize=LEGEND_FONT_SIZE,
+                       title_fontsize=LEGEND_FONT_SIZE)
+    ax.add_artist(legend)
     
     #add a legend for the loss data
     data = plot_loss_data(ax, label_loss=True, solar=solar)
-    ax.legend(handles=data, loc='upper center', bbox_to_anchor=(0.57, 0.86),
-              labels=[r'KK12, $Z$, (Ibc+IIb)/II', 'G17 Ibc/(II+IIb)'], title='SN Survey Data',
-              fontsize=LEGEND_FONT_SIZE, title_fontsize=LEGEND_FONT_SIZE)
+    if LOSS_legend:
+        ax.legend(handles=data,
+                  loc='upper center',
+                  bbox_to_anchor=(0.57, 0.86),
+                  labels=[r'KK12, $Z$, (Ibc+IIb)/II', 'G17 Ibc/(II+IIb)'],
+                  title='SN Survey Data',
+                  fontsize=LEGEND_FONT_SIZE,
+                  title_fontsize=LEGEND_FONT_SIZE)
 
 
-def plot_sigma_change(ax, sigma_data, zsun=0.02, bh_cap=3.0, solar=9.05):
-    #the third plot is variations across sigma
-    SIGMA_VALUES = [50.0, 73.9, 97.8, 121.7, 145.6, 169.4, 193.3, 217.2, 241.1, 265.0]
-
-    colors = ["#df3fdf", "#f17db3", "#ff5549", '#ffa325']
-    cmap = LinearSegmentedColormap.from_list("my_colormap", colors)
-    norm = Normalize(vmin=min(SIGMA_VALUES), vmax=max(SIGMA_VALUES))
-
-    for sigma in SIGMA_VALUES:
-        var_label = f'{sigma}'
-        var_color = cmap(norm(sigma))
-
-        plotting(zsun, ax, sigma_data, legend=False,
-                plot_singles=False,  singles_color=None, singles_label=None,
-                plot_orig=True,     orig_color=var_color, orig_label=var_label,
-                bh_cap=bh_cap, sigma=sigma, alpha1=1.0, change_IIbs=False, legend_cols=None)
-                 
-    plot_loss_data(ax, label_loss=False, solar=solar)
-    ax.legend(loc='upper left', ncols=2, title = 'Natal kicks: ' + r'$\sigma$ (km$\,$s$^{-1}$)',
-              fontsize=LEGEND_FONT_SIZE, title_fontsize=LEGEND_FONT_SIZE)
-
-def plot_alpha_change(ax, alpha_data, zsun=0.02, qcflag=5, bh_cap=3.0, solar=9.05):
-    # the fourth plot is the variations across alpha
-    ALPHA1_VALUES = [0.05, 0.083, 0.139, 0.232, 0.387, 0.646, 1.077, 1.797, 2.997, 5.0]
-    colors = ["#4382d4", '#11d6d6', '#00ff83', '#74d600', '#adff00']
-    cmap = LinearSegmentedColormap.from_list("my_colormap", colors)
-    norm = LogNorm(vmin=min(ALPHA1_VALUES), vmax=max(ALPHA1_VALUES))
-
-    for alpha1 in ALPHA1_VALUES:
-        var_label =  f'{alpha1}'
-        var_color = cmap(norm(alpha1))
-        
-        plotting(zsun, ax, alpha_data, legend=None,
-                plot_singles=False,  singles_color=None, singles_label=None,
-                plot_orig=True,     orig_color=var_color,    orig_label=var_label,
-                bh_cap=bh_cap, sigma=265.0, alpha1=alpha1, change_IIbs=False)
-
-    plot_loss_data(ax, label_loss=False, solar=solar)
-    ax.legend(loc='upper left', ncols=2, title = 'Common envelope: ' + r'$\alpha$',
-              fontsize=LEGEND_FONT_SIZE, title_fontsize=LEGEND_FONT_SIZE)
-
-def plot_Klencki(ax, pess, klencki_10, klencki_07, all_mergers, zsun=0.02, bh_cap=3.0, qcflag=5, solar=9.05):
-    colors = ['#00c6d2', "#4595df", "#9321c9", '#e073b4']
+def plot_kicks(ax,
+               kick_data,
+               kick_models = [(5, None), (1, 50.0), (1, 200.0)], #(kickflag, sigma)
+               binfrac = 'offner23',
+               zsun=0.02,
+               solar=9.05,
+               kick_colors = ["#d85ed8", "#ffaf25"],
+               LOSS_legend=False, expl_fryer=False):
     
-    labels = [r'$\alpha=1.0$, Pessimistic CEE',
-              r'Klencki+2021 $(\alpha=1.0)$',
-              r'Klencki+2021 $(\alpha=0.7)$',
-              r'$\alpha=0$, All CEE merge']
+    """
+    Function which wraps plot_variations which plots the effect of changing the kick model.
     
-    linewidths = [2.5, 2.0, 1.5, 1.0]
+    :param ax: Matplotlib axis object to plot on.
+    :param kick_data: DataFrame containing the sn_info which is formatted with all the appropriate columns created by ccsnlab.data_loading.process_raw.
+    :param kick_models: List of tuples of (kickflag, sigma) to plot.
+    :param binfrac: The binary fraction for which all variations are plotted.
+    :param zsun: Solar metallicity value to normalize the plot's COSMIC metallicity values.
+    :param solar: Solar metallicity value in 12+log(O/H) for the plot.
+    :param LOSS_legend: Boolean indicating whether to display the LOSS legend.
+    """
+
+    kick_labels = []
+    for kickflag, sigma in kick_models:
+        if kickflag == 5:
+            kick_labels.append('Disberg+2025')
+        else:
+            kick_labels.append(r'$\sigma=$' + f'{int(sigma)}' + r'$\,{\rm km}\,{\rm s}^{-1}$')
     
-    data_list = [pess, klencki_10, klencki_07, all_mergers]
+    #colors = ["#df3fdf", "#f17db3", "#ff5549", '#ffa325']
+    
+    cmap = LinearSegmentedColormap.from_list("my_colormap", kick_colors)
+    colors = cmap(np.linspace(0, 1, len(kick_models)))
 
-    for var_color, var_label, linewidth, data in zip(colors, labels, linewidths, data_list):
-        plotting(zsun, ax, data, legend=False,
-                 plot_singles=False,  singles_color=None, singles_label=None,
-                 plot_orig=True,  orig_color=var_color, orig_label=var_label,
-                 bh_cap=bh_cap, sigma=265.0, alpha1=1.0, change_IIbs=False, linewidth=linewidth)
+    expls = [('sn_1_massc_co_layer_1', 'sn_2_massc_co_layer_2', 15)] * len(kick_models) if expl_fryer else ['maltsev'] * len(kick_models)
+    
+    lines = []
+    for (kickflag, sigma), label, color in zip(kick_models, kick_labels, colors):
+        line = plot_I_over_II_one_curve(kick_data,
+                                        ax,
+                                        explosion_criteria=expls[0],
+                                        filter_list=[('kickflag', kickflag),
+                                                     ('binfrac', binfrac)],
+                                        curve_label=label,
+                                        zsun=zsun,
+                                        color=color,
+                                        linestyle='-',
+                                        linewidth=2)
+        lines.append(line)
+    
+    #add a legend for the COSMIC data
+    legend = ax.legend(handles=lines, loc='upper left', title='Natal Kicks', fontsize=LEGEND_FONT_SIZE, title_fontsize=LEGEND_FONT_SIZE)
+    ax.add_artist(legend)
 
-    plot_loss_data(ax, label_loss=False, solar=solar)
-    ax.legend(loc='upper left', ncols=1, title = 'Common envelope: custom',
-              fontsize=LEGEND_FONT_SIZE, title_fontsize=LEGEND_FONT_SIZE)
+    #add a legend for the loss data
+    data = plot_loss_data(ax, label_loss=True, solar=solar)
+    if LOSS_legend:
+        ax.legend(handles=data, loc='upper center', bbox_to_anchor=(0.57, 0.86),
+                  labels=[r'KK12, $Z$, (Ibc+IIb)/II', 'G17 Ibc/(II+IIb)'], title='SN Survey Data',
+                  fontsize=LEGEND_FONT_SIZE, title_fontsize=LEGEND_FONT_SIZE)
 
-def make_paper_5_figure(fiducial_data, sigma_data, alpha_data, pess, klencki_10,
-                        klencki_07, all_mergers, zsun=0.02, bh_cap=3.0, solar=9.05,
+def plot_cee(ax,
+             alpha_data,
+             klencki_data,
+             zsun=0.02,
+             binfrac='offner23',
+             LOSS_legend=False,
+             qcflags=[4,5],
+             alphas=[0.3, 1.0, 5.0],
+             cee_colors = ["#4382d4", '#11d6d6', '#00ff83', '#74d600', '#adff00'],
+             klencki_colors = ["#ff7f00", "#FF4ea3"],
+             solar=9.05):
+    
+    #goal: for each qcflag, plot each alpha and the klencki data
+    cmap = LinearSegmentedColormap.from_list("my_colormap", cee_colors)
+    n_variations = len(qcflags) * len(alphas)
+    cee_colors = cmap(np.linspace(0, 1, n_variations))
+
+    i = 0
+    all_lines = []
+    for qcflag, klencki_color in zip(qcflags, klencki_colors):
+        #create first the variation labels
+        labels = []
+        for alpha in alphas:
+            if len(qcflags) > 1:
+                labels.append(r'$\alpha=$' + f'{alpha:.1f}, ' + f'qcflag={qcflag}')
+            else:
+                labels.append(r'$\alpha=$' + f'{alpha:.1f}')
+
+        colors = cee_colors[i:i+len(alphas)]
+        lines = plot_variations(zsun,
+                                ax,
+                                alpha_data,
+                                variation='alpha',
+                                variation_values=alphas,
+                                variation_labels=labels,
+                                variation_colors=colors,
+                                linewidths=[2]*(len(alphas)+1),
+                                binfrac=binfrac,
+                                kicks=(5, None),
+                                alpha=None,
+                                qcflag=qcflag,
+                                change_IIbs=False,
+                                explosion_criteria=['maltsev'] * (len(alphas) + 1))
+        i += len(labels)
+        all_lines.extend(lines)
+
+        #plot the klencki data        
+        labels = [r'Klencki+2021 ($\alpha=0.7$), qcflag={qcflag}'] if len(qcflags) > 1 else [r'Klencki+2021' + '\n' + r'($\alpha=0.7$)']
+        colors = [klencki_color]
+
+        lines = plot_variations(zsun,
+                                ax,
+                                klencki_data,
+                                variation='klencki',
+                                variation_values=[None],
+                                variation_labels=labels,
+                                variation_colors=colors,
+                                linewidths=[2]*len(labels),
+                                binfrac=binfrac,
+                                kicks=(5, None),
+                                alpha=0.7,
+                                qcflag=qcflag,
+                                change_IIbs=False,
+                                explosion_criteria=['maltsev'] * len(labels))
+        i += len(labels)
+        all_lines.extend(lines)
+
+    #add a legend for the COSMIC data
+    legend = ax.legend(handles=all_lines, loc='upper left', title='CEE', fontsize=LEGEND_FONT_SIZE, title_fontsize=LEGEND_FONT_SIZE)
+    ax.add_artist(legend)
+
+    #add a legend for the loss data
+    data = plot_loss_data(ax, label_loss=True, solar=solar)
+    if LOSS_legend:
+        ax.legend(handles=data, loc='upper center', bbox_to_anchor=(0.57, 0.86),
+                  labels=[r'KK12, $Z$, (Ibc+IIb)/II', 'G17 Ibc/(II+IIb)'], title='SN Survey Data',
+                  fontsize=LEGEND_FONT_SIZE, title_fontsize=LEGEND_FONT_SIZE)
+
+def make_paper_5_figure(fiducial_data,
+                        remnant_data,
+                        kick_data,
+                        alpha_data,
+                        klencki_data,
+                        zsun=0.02,
+                        solar=9.05,
+                        binfrac='offner23',
+                        plot_text_x = [0.3, 0.47, 0.33, 0.3],
+                        plot_text_y = [0.95, 0.95, 0.95, 0.95],
+                        no_cosmic_model_text = (0.95, 0.4, 18),
+                        binfrac_colors = ['#d16ba5', '#c297ec', '#90c6ff', '#41f2ff'],
+                        remnant_colors =  ["#f7c067", "#f26359"],
+                        kick_colors = ["#ed4cf5", "#ffc258"],
+                        cee_colors = ["#326DB9", '#17CCD6', "#04F655"],
+                        klencki_color = "#bce784",
                         savepath='final_figs/figure_1.png'):
     
+    if binfrac != 'offner23' and binfrac != '0.6':
+        raise ValueError("Invalid binary fraction specified. Must be 'offner23' or '0.6'.")
+    
     fig, axs = plt.subplots(2, 2, figsize=(24, 16))
-    mass_cap_ax, sigma_change_ax, alpha_change_ax5, klencki_merger_ax = axs.flatten()
+    binfrac_ax, remnant_ax, kick_ax, cee_ax = axs.flatten()
 
-    plot_mass_caps(mass_cap_ax, fiducial_data, zsun=zsun, solar=solar)
-    print("Plotted mass caps", flush=True)
+    if fiducial_data is not None:
+        plot_binfracs(binfrac_ax,
+                    fiducial_data,
+                    zsun = zsun, 
+                    solar = solar,
+                    binfracs = ['0.0', '0.6', 'offner23'],
+                    binfrac_colors = binfrac_colors,
+                    LOSS_legend=True)
+        print("Plotted binfrac", flush=True)
 
-    plot_sigma_change(sigma_change_ax, sigma_data, zsun=zsun, bh_cap=bh_cap, solar=solar)
-    print("Plotted sigma change", flush=True)
+    if remnant_data is not None:
+        plot_remnants(remnant_ax,
+                    remnant_data,
+                    zsun = zsun, 
+                    solar = solar,
+                    binfrac = binfrac,
+                    remnant_colors = remnant_colors,
+                    LOSS_legend=False,
+                        rem_vars = [(6, 0.0, 0, 0.5, 0.1, None), # (remnantflag, rembar_massloss, maltsev_mode, maltsev_fallback, maltsev_pf_prob, fryer_mass_limit)
+                                    (4, 0.5, None, None, None, 0)],
+                        fryer_vars = [('sn_1_remnant_mass', 'sn_2_remnant_mass', 3), # columns to cut on and upper mass threshold for the fryer models
+                                    ('sn_1_massc_co_layer_1', 'sn_2_massc_co_layer_2', 15)])
+        print("Plotted remnant", flush=True)
 
-    plot_alpha_change(alpha_change_ax5, alpha_data, zsun=zsun, qcflag=5, bh_cap=bh_cap, solar=solar)
-    print("Plotted alpha change", flush=True)
+    if kick_data is not None:
+        plot_kicks(kick_ax,
+                kick_data,
+                kick_models = [(5, None), (1, 50.0), (1, 200.0)], #(kickflag, sigma)
+                binfrac = binfrac, expl_fryer=True,
+                zsun=zsun,
+                solar=solar,
+                kick_colors = kick_colors,
+                LOSS_legend=False)
+        print("Plotted kicks", flush=True)
 
-    plot_Klencki(klencki_merger_ax, pess, klencki_10, klencki_07,
-                 all_mergers, zsun=zsun, bh_cap=bh_cap, solar=solar)
-    print("Plotted Klencki", flush=True)
+    if alpha_data is not None and klencki_data is not None:
+        plot_cee(cee_ax,
+                alpha_data,
+                klencki_data,
+                zsun=zsun,
+                qcflags=[5],
+                alphas=[5.0, 1.0, 0.3],
+                binfrac=binfrac,
+                solar=solar,
+                cee_colors = cee_colors,
+                klencki_colors = [klencki_color],
+                LOSS_legend=False)
+        print("Plotted cee", flush=True)
 
-    sigma_string = r'$\sigma = 265.0\,$km$\,$s$^{-1}$'
-    alpha_string = r'$\alpha = 1.0$'
-    mrem_string = r'$M_{\rm Rem} < 3\, M_{\odot}$'
+    binfrac_string = 'Binary Fraction: Offner+23' if binfrac == 'offner23' else f'Binary Fraction: 60%'
+    kick_string = 'Natal Kicks: Disberg+2025'
+    alpha_string = r'CEE: ' + r'$\alpha = 1.0$'
+    remnant_string = 'Remnants: Maltsev+2025 ' + r'($p_{\rm BH}=10$%)'
 
-    plot_text = [sigma_string + '\n' + alpha_string, #varied mass caps
-                 mrem_string +  '\n' + alpha_string, #varied sigma
-                 mrem_string +  '\n' + sigma_string, #varied alpha
-                 mrem_string +  '\n' + sigma_string  #varied custom cee
+    plot_text = [remnant_string + '\n' + kick_string + '\n' + alpha_string, #binfracs
+                 binfrac_string + '\n' + kick_string +  '\n' + alpha_string, #varied remnant
+                 binfrac_string + '\n' + remnant_string + '\n' + alpha_string, #varied kicks
+                 binfrac_string + '\n' + remnant_string + '\n' + kick_string, #varied cee
                  ]
 
     for i, ax in enumerate(axs.flatten()):
@@ -580,10 +843,10 @@ def make_paper_5_figure(fiducial_data, sigma_data, alpha_data, pess, klencki_10,
         ax.set_xticks(x_ticks, labels=[str(xt) for xt in x_ticks], fontsize=24)
         text = plot_text[i]
         #write it in the top middle with ax.text
-        ax.text(0.5, 0.95, text, transform=ax.transAxes, ha='left', va='top', fontsize=20)
+        ax.text(plot_text_x[i], plot_text_y[i], text, transform=ax.transAxes, ha='left', va='top', fontsize=20)
 
-    mass_cap_ax.text(0.896, 0.8, "No\nCOSMIC\nmodels", transform=mass_cap_ax.transAxes,
-                     color='crimson', fontsize=18, ha='left', va='top')
+    binfrac_ax.text(no_cosmic_model_text[0], no_cosmic_model_text[1], "No\nCOSMIC\nModels", transform=binfrac_ax.transAxes,
+                     color='crimson', fontsize=no_cosmic_model_text[2], ha='center', va='top')
 
 
     fig.tight_layout()
