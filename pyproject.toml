@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "ccsnlab"
-version = "0.1.0"
-description = "CCSN analysis & plotting toolbox"
+version = "1.0.0"
+description = "CCSN analysis & plotting toolkit"
 readme = "README.md"
 requires-python = ">=3.10"
 authors = [{ name = "Mark Martinez" }]
@@ -15,12 +15,8 @@ dependencies = [
   "matplotlib",
   "ipykernel",
   "pyyaml",
-  "tables"
-]
-
-[project.optional-dependencies]
-cosmic = [
-    "cosmic-popsynth==3.5.0",
+  "tables",
+  "cosmic-popsynth>=3.7.0"
 ]
 
 [tool.hatch.build.targets.wheel]

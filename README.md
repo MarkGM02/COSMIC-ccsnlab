@@ -14,7 +14,7 @@ This repository contains the supporting code developed for [**“Properties of C
 
 If you desire to view the original results from the paper, or exactly replicate our plots, please download the processed **CCSN population dataframes** from the [**Zenodo archive**](https://doi.org/10.5281/zenodo.17620853).
 
-These dataframes contain all binary systems that underwent one or more CCSNe in our COSMIC population grids. Each row corresponds to a unique binary (`bin_num`) and includes information about both the first and second supernova events, and the system at zero age main sequence (ZAMS). You can also create these dataframes from your own COSMIC output using the tools in the [`ccsnlab.data_loading`](src/ccsnlab/data_loading) module. The dataframes may be accessed by opening the `.h5` files and loading the dataset stored under the key `"data"`. A more thorough description of this is in the next section.
+These dataframes contain all binary systems that underwent one or more CCSNe in our COSMIC population grids. Each row corresponds to a unique binary (`bin_num`) and includes information about both the first and second supernova events, and the system at zero age main sequence (ZAMS). You can also create these dataframes from your own COSMIC output using the tools in the [`ccsnlab.data`](src/ccsnlab/data) module. The dataframes may be accessed by opening the `.h5` files and loading the dataset stored under the key `"sn_info"`. A more thorough description of this is in the next section.
 
 All columns listed with an asterisk (`_*`) appear twice, once with a 1 for the **primary** and once with a 2 for the **secondary**. The 1 and 2 do **not** correspond to the order in which the events occured, consult the (`sn_*_time`) column to determine their order. The columns are as follows:
 
@@ -29,27 +29,41 @@ All columns listed with an asterisk (`_*`) appear twice, once with a 1 for the *
 | `zams_sep` | Initial orbital separation (R⊙). |
 | `sn_*_time` | Time (in Myr) at which each supernova occurred. |
 | `sn_*_mass_1`, `sn_*_mass_2` | Stellar masses (M⊙) at the time of each supernova. |
-| `sn_*_massc_1`, `sn_*_massc_2` | Core masses (M⊙) at the time of each supernova. |
-| `sn_*_menv_1`, `sn_*_menv_2` | Envelope masses (M⊙) at the time of each supernova. |
-| `sn_*_kstar_1`, `sn_*_kstar_2` | Stellar type flags (`kstar`) for both stars (see COSMIC documentation for definitions). |
+| `sn_1_massc_he_layer_1`, `sn_2_massc_he_layer_2` | Helium core masses (M⊙) at the time of each supernova. |
+| `sn_1_massc_co_layer_1`, `sn_2_massc_co_layer_2` | Carbon-oxygen core masses (M⊙) at the time of each supernova. |
+| `sn_1_menv_1`, `sn_2_menv_2` | Envelope masses (M⊙) at the time of each supernova. |
+| `sn_*_kstar_1`, `sn_*_kstar_2` | Stellar type flags (`kstar`) for both stars at each supernova (see COSMIC documentation for definitions). |
 | `sn_*_porb`, `sn_*_ecc`, `sn_*_sep` | Orbital period, eccentricity, and separation immediately before each supernova. |
 | `sn_*_max_loss_rate` | Maximum mass loss rate (M⊙/yr) during the last kyr before the SN (values in this column implying mass loss are negative, taken from COSMIC's `deltam_*` column). |
 | `sn_*_remnant_mass` | Compact object remnant mass (M⊙) after the SN. |
 | `sn_*_donor_kstars` | List of `kstar` types in which this star was a donor concatenated into a string, (e.g. '1-2'). |
+| `sn_*_accretor_kstars` | List of `kstar` types in which this star was an accretor concatenated into a string, (e.g. '1-2'). |
 | `sn_*_interactions` | Either None, 'RLOF', or 'CEE', corresponds to only pre-SN. |
 | `sn_*_last_donor` | Boolean, whether the star was the donor in the last Pre-SN mass transfer. |
 | `sn_*_merger` | Boolean indicating if the system merged before the SN. |
 | `is_single` | Boolean flag for isolated single-star systems (at formation). |
 | `sn_*_ns` | Boolean flags indicating whether the remnant produced is a neutron star. |
-| `sn_*_CO_core_mass` | Carbon–oxygen core mass at collapse. |
-| `sn_*_m_ejecta` | Total ejected mass (M⊙) during the SN. |
+| `sn_*_m_neutrino_loss` | Total mass loss from the compact object by neutrino emission (M⊙). |
+| `sn_*_m_ejecta` | Total ejecta mass (M⊙) during the SN. |
 | `sn_*_m_h_ejecta`, `sn_*_m_he_ejecta`, `sn_*_m_co_ejecta` | Hydrogen, helium, and carbon-oxygen ejecta components (M⊙). |
 | `sn_*_type` | Broad supernova type (either, 'I' or 'II', or some exotic type like 'ECSN'). |
 | `sn_*_subtype` | Supernova subtype (all systems with sn_*_type of 'I' or 'II' is assgined one of, IIn, IIP, IIL, IIb, Ib, Ic). |
+| `sn_*_maltsev_case` | The mass transfer case for applying the Maltsev+25 remnant and explodability criteria. Either 'A', 'B', 'C', or 'S' (single / no MT). |
+| `sn_*_maltsev_region` | The region of compact object formation as a function of metallicity and carbon-oxygen core mass. Either 'NS', 'NS/BH', or 'Direct BH' |
 | `sample_mass` | Total sampled stellar mass (M⊙) for population scaling. |
 | `singles_mass` | Mass contribution from single stars (at formation) in the same model. |
+| `n_stars` | Number of stars sampled in the model. |
+| `n_singles` | Number of single stars sampled in the model. |
+| `binfrac` | The binary fraction model used to generate the population, always stored as a string (e.g. 'offner23' or '0.6'). |
+| `remnantflag` | The thing. |
+| `maltsev_mode` | The thing. |
+| `maltsev_fallback` | The thing. |
+| `maltsev_pf_prob` | The thing. |
+| `rembar_massloss` | The thing. |
+| `kickflag` | The thing. |
 | `sigma` | Natal kick dispersion (km s⁻¹) population was evolved with. |
-| `alpha1` | Common envelope efficiency parameter α used for evolution (this column is set to 1.0  for simplicity in our custom models CEE, though this is not true). |
+| `alpha` | Common envelope efficiency parameter α used for evolution (this column is set to 1.0  for simplicity in our custom models CEE, though this is not true). |
+| `qcflag` | The thing. |
 | `met_cosmic` | Metallicity (Z) used in COSMIC run. **Not** relative to solar metallicity. To scale to solar metallicity divide by Z⊙=0.02. |
 
 ---
@@ -58,7 +72,7 @@ All columns listed with an asterisk (`_*`) appear twice, once with a 1 for the *
 
 The supernova classification routines ([`ccsnlab.sn_types`](src/ccsnlab/sn_types.py)) are designed to operate on dataframes structured as described above. The classification assumptions can be customized in a number of ways. We provide a notebook [`notebooks/classification_variations.ipynb`](notebooks/classification_variations.ipynb) that walks through examples of how to modify these assumptions and how to analyze their impacts on the CCSN population demographics
 
-You can create your own `sn_info` dataframe from COSMIC output using the tools in [`ccsnlab.data_loading`](src/ccsnlab/data_loading) -- an example notebook [`notebooks/evolve_binary_demo.ipynb`](notebooks/evolve_binary_demo.ipynb) walks through this process with a small COSMIC output!
+You can create your own `sn_info` dataframe from COSMIC output using the tools in [`ccsnlab.data`](src/ccsnlab/data) -- an example notebook [`notebooks/evolve_binary_demo.ipynb`](notebooks/evolve_binary_demo.ipynb) walks through this process with a small COSMIC output!
 
 There are a few caveats to using this for any COSMIC output. All that is required by the function to create the data is a `bpp` and `bcm` dataframe from COSMIC. However, there may be errors or unintended side effects if the data is not saved in a compatible way.
 
@@ -106,4 +120,4 @@ If you wish to exactly replicate the plots, please install this package followin
 
 ## Scripts Used to Sample and Evolve the Paper Dataset
 
-Also available in this repository are the exact sampling and evolution scripts used to generate the original datasets. These scripts are provided as a procedural receipt: they rely heavily on the specific directory structure used during our runs and will not function out of the box in a different environment. In most cases, more efficient and general versions of this functionality are already implemented in the modules provided in this repository. The original scripts are available in the `scripts/` directory. I do not recommend you use these yourself, since there are more efficient ways to do most of these things in COSMIC that I did not know about when I started!
+Also available in this repository are the exact scripts used to generate and aggregate the original populations and datasets. They work through a combination of bash and python scripts set up to submit simultaneous jobs via sbatch. These original scripts are available in the `scripts/` directory. The bash scripts will need to be slightly modified to work for other setups. There is a readme which details the exact procedure to create all the data.
