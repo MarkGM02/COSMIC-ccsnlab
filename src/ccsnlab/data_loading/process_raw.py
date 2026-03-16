@@ -264,13 +264,12 @@ def create_sn_info(bpp, bcm, metallicity, BSEDICT, binfrac, sample_mass, singles
     # We assume now that the maltsev prescription is used strictly with rembar_massloss = 0, so that 
     for sn in (1, 2):
         if BSEDICT['remnantflag'] >= 1:
-            neutrino_loss = get_neutrino_mass_loss(result[f'sn_{sn}_remnant_mass'], rembar_massloss=BSEDICT['rembar_massloss'])
-        elif BSEDICT['remnantflag'] == 6:
-            # we take the remnant mass as is, and assume no neutrino mass loss
-            neutrino_loss = np.ones(len(result)) * 0
+            #apply this to the dataframe
+            neutrino_loss = result.apply(lambda row: get_neutrino_mass_loss(row[f'sn_{sn}_remnant_mass'], rembar_massloss=BSEDICT['rembar_massloss']), axis=1)
         else:
-            raise NotImplementedError(f"Remnant flag {BSEDICT['remnantflag']} not supported for ejecta profile calculation")
-        
+            #no mass loss occurs
+            neutrino_loss = np.ones(len(result)) * 0
+
         # the ejecta mass is total mass - remnant mass - neutrino mass loss.
         m_ejecta = (result[f'sn_{sn}_mass_{sn}'] - result[f'sn_{sn}_remnant_mass'] - neutrino_loss).clip(lower=0)
 
