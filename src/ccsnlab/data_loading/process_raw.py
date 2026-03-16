@@ -8,7 +8,7 @@ import pandas as pd
 warnings.filterwarnings('ignore', category=pd.errors.PerformanceWarning)
 
 from ccsnlab.sn_types import sn_types, sn_subtypes
-from ccsnlab.data_loading.delayed_fryer import get_remnant_mass, neutrino_mass_loss
+from ccsnlab.data_loading.neutrino import get_neutrino_mass_loss
 from ccsnlab.data_loading.maltsev import get_masses
 
 """
@@ -214,7 +214,12 @@ def create_sn_info(bpp, bcm, metallicity, BSEDICT, binfrac, sample_mass, singles
         return result
 
     interaction_df = create_interaction_df(bpp)
-    random_seeds = bpp[['bin_num', 'randomseed']].drop_duplicates('bin_num', keep='first')
+
+    #if the randomseed is in the bpp, then grab it for each bin_num, otherwise create a dummy column of -1
+    if 'randomseed' in bpp.columns:
+        random_seeds = bpp[['bin_num', 'randomseed']].drop_duplicates('bin_num', keep='first')
+    else:
+        random_seeds = pd.DataFrame({'bin_num': bpp['bin_num'].unique(), 'randomseed': -1})
 
     #combine all via bin_num
     result = pd.merge(bcm_final_rows, zams, on='bin_num', how='left')
@@ -258,11 +263,8 @@ def create_sn_info(bpp, bcm, metallicity, BSEDICT, binfrac, sample_mass, singles
     # of now, we only support the delayed Fryer (remnantflag=4), and the Maltsev (remnantflag=6) prescriptions, and all else could be added later.
     # We assume now that the maltsev prescription is used strictly with rembar_massloss = 0, so that 
     for sn in (1, 2):
-        if BSEDICT['remnantflag'] == 4:
-            _, neutrino_loss = zip(*result.apply(lambda row: get_remnant_mass(row[f'sn_{sn}_massc_co_layer_{sn}'],
-                                                                              row[f'sn_{sn}_mass_{sn}'],
-                                                                              rembar_massloss=BSEDICT['rembar_massloss']),
-                                                                              axis=1))
+        if BSEDICT['remnantflag'] >= 1:
+            neutrino_loss = get_neutrino_mass_loss(result[f'sn_{sn}_remnant_mass'], rembar_massloss=0.5)
             neutrino_loss = pd.Series(neutrino_loss).clip(lower=0) #make sure no negative neutrino mass loss somehow
         elif BSEDICT['remnantflag'] == 6:
             # we take the remnant mass as is, and assume no neutrino mass loss
@@ -378,12 +380,12 @@ def create_sn_info(bpp, bcm, metallicity, BSEDICT, binfrac, sample_mass, singles
     result['maltsev_fallback'] = BSEDICT['maltsev_fallback']
     result['maltsev_pf_prob'] = BSEDICT['maltsev_pf_prob']
     result['rembar_massloss'] = BSEDICT['rembar_massloss']
+    result['fryer_mass_limit'] = BSEDICT['fryer_mass_limit']
 
     result['kickflag'] = BSEDICT['kickflag']
     result['sigma'] = BSEDICT['sigma']
     result['alpha'] = BSEDICT['alpha1']
     result['qcflag'] = BSEDICT['qcflag']
-
     result['met_cosmic'] = metallicity
 
     # ---------------------------------
