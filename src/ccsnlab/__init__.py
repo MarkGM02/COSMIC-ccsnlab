@@ -15,4 +15,4 @@ except _metadata.PackageNotFoundError:
 
 __author__ = "Mark Martinez"
 
-__all__ = ["data", "plotting", "cee_rerun"]
+__all__ = ["data_loading", "plotting", "cee_rerun"]

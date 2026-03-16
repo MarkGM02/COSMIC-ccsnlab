@@ -8,7 +8,7 @@ import pandas as pd
 warnings.filterwarnings('ignore', category=pd.errors.PerformanceWarning)
 
 from ccsnlab.sn_types import sn_types, sn_subtypes
-from ccsnlab.data_loading.neutrino import get_neutrino_mass_loss
+from ccsnlab.data_loading.neutrino import neutrino_mass_loss, get_neutrino_mass_loss
 from ccsnlab.data_loading.maltsev import get_masses
 
 """
@@ -264,8 +264,7 @@ def create_sn_info(bpp, bcm, metallicity, BSEDICT, binfrac, sample_mass, singles
     # We assume now that the maltsev prescription is used strictly with rembar_massloss = 0, so that 
     for sn in (1, 2):
         if BSEDICT['remnantflag'] >= 1:
-            neutrino_loss = get_neutrino_mass_loss(result[f'sn_{sn}_remnant_mass'], rembar_massloss=0.5)
-            neutrino_loss = pd.Series(neutrino_loss).clip(lower=0) #make sure no negative neutrino mass loss somehow
+            neutrino_loss = get_neutrino_mass_loss(result[f'sn_{sn}_remnant_mass'], rembar_massloss=BSEDICT['rembar_massloss'])
         elif BSEDICT['remnantflag'] == 6:
             # we take the remnant mass as is, and assume no neutrino mass loss
             neutrino_loss = np.ones(len(result)) * 0
