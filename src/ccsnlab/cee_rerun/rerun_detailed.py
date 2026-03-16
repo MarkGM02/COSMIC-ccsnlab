@@ -67,7 +67,7 @@ def rerun_Klencki(original_bpp, original_bcm, metallicity, merger_criteria, BSED
 
 def find_first(curr_bpp, metallicity, merger_criteria, kind='survive'):
     #ensure this is sorted by tphys
-    curr_bpp.sort_values(by='tphys', inplace=True)
+    curr_bpp.sort_values(by='tphys')
     #get the ZAMS stuff and CEE rows
     CEE_rows = curr_bpp[curr_bpp.evol_type == 7]
     M_zams_1, M_zams_2 = curr_bpp.mass_1.values[0], curr_bpp.mass_2.values[0]
