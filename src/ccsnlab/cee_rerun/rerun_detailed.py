@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+import sys
 
 import warnings
 warnings.filterwarnings("ignore", category=pd.errors.PerformanceWarning)
@@ -8,7 +9,13 @@ from ccsnlab.cee_rerun.merger_criteria_functions import get_criterion_func
 from ccsnlab.cee_rerun.Klencki_lambda import get_lambda
 from cosmic.evolve import Evolve
 
-def rerun_Klencki(original_bpp, original_bcm, metallicity, merger_criteria, BSEDict, debug=False):
+def rerun_Klencki(original_folder,
+                  metallicity,
+                  merger_criteria,
+                  BSEDict,
+                  out_folder='',
+                  verbose=True,
+                  debug=False):
     """
     Rerun a single COSMIC population with detailed CEE from Klencki+2021. We require that the original population was generated with alpha=0.
     This is because of a few reasons:
@@ -22,18 +29,20 @@ def rerun_Klencki(original_bpp, original_bcm, metallicity, merger_criteria, BSED
 
     Parameters
     ----------
-    original_bpp : pd.DataFrame
-        Original COSMIC bpp DataFrame for the population to rerun.
-    original_bcm : pd.DataFrame
-        Original COSMIC bcm DataFrame for the population to rerun.
+    original_path : str
+        The path to the original COSMIC population to rerun, which should have been generated with alpha=0.
     metallicity : float
         Metallicity of the population to rerun.
     merger_criteria : str
         The merger criteria to use ('Klencki_1.0', 'Klencki_0.7').
     BSEDict : dict
         The parameters to use for the COSMIC evolution (of course the CEE treatment will be overridden).
+    out_folder : str, optional
+        The folder to save the rerun population to, by default '' (current folder).
+    verbose : bool, optional
+        Whether to print additional information during the rerun process, by default True.
     debug : bool, optional
-        Whether to print debug information during the rerun process, by default False.
+        Whether to print the procedure for every single binary, by default False (Warning: log sizes for our grids will exceed 1mb).
     
     Returns
     -------
@@ -43,12 +52,41 @@ def rerun_Klencki(original_bpp, original_bcm, metallicity, merger_criteria, BSED
         The rerun bcm DataFrame with the Klencki CEE treatment, filtered to include last kyr before sne + final row.
     """
 
-    result_bpp, result_bcm = [], []
+    # read in the old bpp and bcm
+    filename = f'dat_kstar1_0_15_kstar2_0_15_SFstart_13700.0_SFduration_0.0_metallicity_{metallicity}'
+    original_path = f'{original_folder}/{filename}.h5'
+    original_bpp = pd.read_hdf(original_path, key='bpp')
+    original_bcm = pd.read_hdf(original_path, key='bcm')
+
+    # set up the new path and open a log
+    log_path = f'{out_folder}/{filename}.txt'
+    sys.stdout = open(log_path, "w")    
+    output_path = f'{out_folder}/{filename}.h5'
+
+    first_write = True
+    write_count = 0
+
+    def write_bpp_and_bcm(bpp, bcm):
+        nonlocal first_write, write_count
+        if first_write:
+            bpp.to_hdf(output_path, key='bpp',
+                            mode='w', format='table')
+            bcm.to_hdf(output_path, key='bcm',
+                            mode='w', format='table')
+            first_write = False
+            write_count += 1
+            if verbose: print(f'[{write_count}/{len(original_bpp.bin_num.unique())}] Created {output_path}', flush=True)
+        else:
+            bpp.to_hdf(output_path, key='bpp',
+                            mode='a', format='table', append=True)
+            bcm.to_hdf(output_path, key='bcm',
+                            mode='a', format='table', append=True)
+            write_count += 1
+            if verbose and write_count % 1000 == 0: print(f'[{write_count}/{len(original_bpp.bin_num.unique())}] Appended to {output_path}', flush=True)
+
     #Lets go through each population now, and rerun as appropriate
-    count = 0
     for bin_num in original_bpp.bin_num.unique():
-        count += 1
-        if debug and count % 100 == 0: print(f'On system {count} of {len(original_bpp.bin_num.unique())}', flush=True)
+        if debug: print(f'Processing binary {bin_num}...', flush=True)
         curr_bpp, curr_bcm = original_bpp[original_bpp.bin_num == bin_num], original_bcm[original_bcm.bin_num == bin_num]
         first_survival_time, lambdaf = find_first(curr_bpp, metallicity, merger_criteria, kind='survive')
         if first_survival_time is not None:
@@ -56,18 +94,35 @@ def rerun_Klencki(original_bpp, original_bcm, metallicity, merger_criteria, BSED
                                                      first_survival_time, lambdaf, BSEDict=BSEDict, debug=debug)
         else:
             new_bpp, new_bcm = curr_bpp, curr_bcm
-        result_bpp.append(new_bpp)
-        result_bcm.append(new_bcm)
 
-    result_bpp, result_bcm = pd.concat(result_bpp, ignore_index=True), pd.concat(result_bcm, ignore_index=True)
+        write_bpp_and_bcm(new_bpp, new_bcm)
+
+    #read in the full saved bpp and bcm, then filter
+    result_bpp = pd.read_hdf(output_path, key='bpp')
+    result_bcm = pd.read_hdf(output_path, key='bcm')
     result_bpp, result_bcm = filter_bpp_and_bcm(result_bpp, result_bcm)
-    print('All systems evolved, filtered bpp and bcm', flush=True)
 
-    return result_bpp, result_bcm
+    # read in the old n_stars, n_singles, mass_stars, mass_singles
+    n_stars = pd.read_hdf(original_path, key='n_stars')
+    n_singles = pd.read_hdf(original_path, key='n_singles')
+    mass_stars = pd.read_hdf(original_path, key='mass_stars')
+    mass_singles = pd.read_hdf(original_path, key='mass_singles')
+
+    # save the new bpp, bcm, n_stars, n_singles, mass_stars, mass_singles to the new path
+    with pd.HDFStore(output_path, mode='w') as store:
+        store['bpp'] = result_bpp
+        store['bcm'] = result_bcm
+        store['n_stars'] = n_stars
+        store['n_singles'] = n_singles
+        store['mass_stars'] = mass_stars
+        store['mass_singles'] = mass_singles
+
+    #read in the old
+    print(f'Rerun complete, saved {output_path}', flush=True)
 
 def find_first(curr_bpp, metallicity, merger_criteria, kind='survive'):
     #ensure this is sorted by tphys
-    curr_bpp.sort_values(by='tphys')
+    curr_bpp = curr_bpp.sort_values(by='tphys')
     #get the ZAMS stuff and CEE rows
     CEE_rows = curr_bpp[curr_bpp.evol_type == 7]
     M_zams_1, M_zams_2 = curr_bpp.mass_1.values[0], curr_bpp.mass_2.values[0]
@@ -144,6 +199,8 @@ def iterate_single_binary(curr_bpp, curr_bcm, metallicity, merger_criteria, CEE_
 
 
 def evolve_population(initialBinaries, alpha1, lambdaf, BSEDict):
+    #keep only the first row in initialBinaries
+    initialBinaries = initialBinaries.iloc[[0]]
     np.random.seed(16)
     BSEDict = BSEDict.copy()
     BSEDict['alpha1'] = alpha1
@@ -151,9 +208,14 @@ def evolve_population(initialBinaries, alpha1, lambdaf, BSEDict):
     #collapse massc_he_layer and massc_co_layer into massc, since COSMIC does not have seperate layers in the initial binary table
     initialBinaries['massc_1'] = initialBinaries['massc_he_layer_1'] + initialBinaries['massc_co_layer_1']
     initialBinaries['massc_2'] = initialBinaries['massc_he_layer_2'] + initialBinaries['massc_co_layer_2']
-    bpp, bcm, _, _ = Evolve.evolve(initialbinarytable=initialBinaries, BSEDict=BSEDict, timestep_conditions=[['kstar_1 >= 4', 'dtp=0.0'],
-                                                                                                             ['kstar_2 >= 4', 'dtp=0.0']],
-                                                                                                             randomseed=initialBinaries.bin_num.values)
+    # save the randomseed and re-attach it
+    randomseed = initialBinaries.randomseed.values[0]
+    bpp, bcm, _, _ = Evolve.evolve(initialbinarytable=initialBinaries,
+                                   BSEDict=BSEDict,
+                                   timestep_conditions=[['kstar_1 >= 4', 'dtp=0.0'],
+                                                        ['kstar_2 >= 4', 'dtp=0.0']],
+                                    randomseed=randomseed)
+    bpp['randomseed'] = randomseed
     return bpp, bcm
 
 def filter_bpp_and_bcm(result_bpp, result_bcm):
