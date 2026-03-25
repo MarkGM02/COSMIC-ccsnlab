@@ -31,7 +31,7 @@ def invert_neutrino_mass_loss(final_remnant_mass, rembar_massloss=0.5):
     
     if rembar_massloss == 0: return final_remnant_mass
 
-    M_i = (1 / 0.3) * ((final_remnant_mass / 6.6666667 - 1)**2 - 1)
+    M_i = (1 / 0.3) * ((final_remnant_mass / 6.6666667 + 1)**2 - 1)
     mass_diff = M_i - final_remnant_mass
 
     if rembar_massloss >= 0:
